@@ -211,11 +211,6 @@ class AudioProcessor {
         try {
             await fs.mkdir(tempDir, { recursive: true });
             
-            if (chunkPaths.length <= batchSize) {
-                // If small enough, use regular merging
-                return this.mergeAudioChunks(chunkPaths, outputPath, format);
-            }
-
             // Process in batches
             const batchFiles = [];
             for (let i = 0; i < chunkPaths.length; i += batchSize) {
