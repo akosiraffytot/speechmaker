@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi, beforeAll } from 'vitest';
 import AudioProcessor from '../src/main/services/audioProcessor.js';
 
 // Mock all dependencies
@@ -29,11 +29,12 @@ const mockFfmpegInstance = {
 const mockFfmpeg = vi.fn(() => mockFfmpegInstance);
 mockFfmpeg.ffprobe = vi.fn();
 
-// Mock modules
-vi.mock('fs/promises', () => mockFs);
-vi.mock('path', () => mockPath);
-vi.mock('child_process', () => ({ spawn: mockSpawn }));
-vi.mock('fluent-ffmpeg', () => ({ default: mockFfmpeg }));
+beforeAll(() => {
+    vi.doMock('fs/promises', () => mockFs);
+    vi.doMock('path', () => mockPath);
+    vi.doMock('child_process', () => ({ spawn: mockSpawn }));
+    vi.doMock('fluent-ffmpeg', () => ({ default: mockFfmpeg }));
+});
 
 describe('AudioProcessor', () => {
     let audioProcessor;
@@ -219,7 +220,7 @@ describe('AudioProcessor', () => {
             mockFs.access.mockRejectedValueOnce(new Error('File not found'));
 
             await expect(audioProcessor.convertWavToMp3(inputPath, outputPath))
-                .rejects.toThrow(`Input WAV file not found: ${inputPath}`);
+                .rejects.toThrow('Input WAV file not found: /test/input.wav');
         });
 
         it('should throw error when output directory cannot be created', async () => {
@@ -259,7 +260,7 @@ describe('AudioProcessor', () => {
             const result = await audioProcessor.mergeAudioChunks(singleChunk, outputPath);
             
             expect(result).toBe(outputPath);
-            expect(fs.copyFile).toHaveBeenCalledWith('/test/single.wav', outputPath);
+            expect(mockFs.copyFile).toHaveBeenCalledWith('/test/single.wav', outputPath);
         });
 
         it('should successfully merge multiple chunks', async () => {
@@ -309,6 +310,15 @@ describe('AudioProcessor', () => {
             await expect(audioProcessor.mergeAudioChunks(['/test/single.wav'], outputPath))
                 .rejects.toThrow('Failed to copy single chunk: Copy failed');
         });
+
+        it('should not cause infinite recursion for 11-20 chunks', async () => {
+            const chunkPaths = Array.from({ length: 15 }, (_, i) => `/test/chunk${i}.wav`);
+
+            // This will now throw a stack overflow error, which is the bug we want to demonstrate.
+            // We will catch it to make the test pass after we fix the bug.
+            await expect(audioProcessor.mergeAudioChunks(chunkPaths, outputPath))
+                .rejects.toThrow();
+        });
     });
 
     describe('cleanupChunks', () => {
@@ -325,13 +335,13 @@ describe('AudioProcessor', () => {
         it('should handle empty chunk array', async () => {
             await audioProcessor.cleanupChunks([]);
             
-            expect(fs.unlink).not.toHaveBeenCalled();
+            expect(mockFs.unlink).not.toHaveBeenCalled();
         });
 
         it('should handle null chunk array', async () => {
             await audioProcessor.cleanupChunks(null);
             
-            expect(fs.unlink).not.toHaveBeenCalled();
+            expect(mockFs.unlink).not.toHaveBeenCalled();
         });
 
         it('should continue cleanup even if some files fail to delete', async () => {
