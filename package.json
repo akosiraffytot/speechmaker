@@ -1,0 +1,104 @@
+{
+  "name": "speechmaker",
+  "version": "1.0.0",
+  "description": "A Windows desktop application that converts text to speech using built-in Windows TTS voices",
+  "main": "src/main/main.js",
+  "type": "module",
+  "author": "SpeechMaker Team",
+  "license": "MIT",
+  "homepage": "./",
+  "scripts": {
+    "dev": "electron .",
+    "build": "electron-builder --dir",
+    "dist": "electron-builder",
+    "dist:win": "electron-builder --win",
+    "dist:portable": "electron-builder --win portable",
+    "dist:nsis": "electron-builder --win nsis",
+    "pack": "electron-builder --dir",
+    "pack:win": "electron-builder --dir --win",
+    "postinstall": "electron-builder install-app-deps",
+    "validate": "node scripts/validate-build.js",
+    "prebuild": "npm run validate",
+    "predist": "npm run validate",
+    "clean": "rimraf dist build/Release build/Debug",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "release": "npm run clean && npm run test && npm run dist"
+  },
+  "devDependencies": {
+    "electron": "^27.0.0",
+    "electron-builder": "^24.6.4",
+    "rimraf": "^5.0.0",
+    "vitest": "^1.0.0"
+  },
+  "dependencies": {
+    "edge-tts": "^1.0.1",
+    "fluent-ffmpeg": "^2.1.2"
+  },
+  "build": {
+    "appId": "com.speechmaker.app",
+    "productName": "SpeechMaker",
+    "copyright": "Copyright © 2024 SpeechMaker Team",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**/*",
+      "node_modules/**/*",
+      "!node_modules/**/*.md",
+      "!node_modules/**/LICENSE*",
+      "!node_modules/**/CHANGELOG*",
+      "!node_modules/**/*.d.ts",
+      "!node_modules/**/*.map",
+      "!**/test/**",
+      "!**/*.test.js",
+      "!**/*.spec.js"
+    ],
+    "extraResources": [
+      {
+        "from": "assets/",
+        "to": "assets/",
+        "filter": ["**/*"]
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        },
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "assets/icon.ico",
+      "publisherName": "SpeechMaker Team",
+      "verifyUpdateCodeSignature": false,
+      "requestedExecutionLevel": "asInvoker"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "SpeechMaker",
+      "uninstallDisplayName": "SpeechMaker - Text to Speech Converter",
+      "license": "LICENSE.txt",
+      "installerIcon": "assets/icon.ico",
+      "uninstallerIcon": "assets/icon.ico",
+      "installerHeaderIcon": "assets/icon.ico",
+      "deleteAppDataOnUninstall": false,
+      "runAfterFinish": true,
+      "menuCategory": "Multimedia",
+      "include": "build/installer.nsh"
+    },
+    "portable": {
+      "artifactName": "${productName}-${version}-portable.exe"
+    },
+    "compression": "maximum",
+    "npmRebuild": false
+  }
+}
