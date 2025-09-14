@@ -4,7 +4,7 @@
 !include "MUI2.nsh"
 
 # Custom installer messages
-LangString DESC_SpeechMaker ${LANG_ENGLISH} "SpeechMaker - Convert text to speech using Windows TTS voices"
+LangString DESC_SpeechMaker 1033 "SpeechMaker - Convert text to speech using Windows TTS voices"
 
 # Registry keys for Windows integration
 !define REGISTRY_KEY "Software\SpeechMaker"
