@@ -93,7 +93,7 @@
       "deleteAppDataOnUninstall": false,
       "runAfterFinish": true,
       "menuCategory": "Multimedia",
-      "include": "build/installer.nsh"
+      "include": "./build/installer.nsh"
     },
     "portable": {
       "artifactName": "${productName}-${version}-portable.exe"
