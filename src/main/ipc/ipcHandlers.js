@@ -1,6 +1,6 @@
-import { ipcMain, dialog } from 'electron';
-import { join } from 'path';
-import ErrorHandler from '../services/errorHandler.js';
+const { ipcMain, dialog } = require('electron');
+const { join } = require('path');
+const ErrorHandler = require('../services/errorHandler.js');
 
 /**
  * IPC Handlers Module
@@ -690,4 +690,4 @@ class IPCHandlers {
     }
 }
 
-export default IPCHandlers;
+module.exports = IPCHandlers;

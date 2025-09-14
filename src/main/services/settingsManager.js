@@ -1,6 +1,6 @@
-import { promises as fs } from 'fs';
-import { join, dirname } from 'path';
-import { app } from 'electron';
+const { promises: fs } = require('fs');
+const { join, dirname } = require('path');
+const { app } = require('electron');
 
 /**
  * Settings Manager Service
@@ -210,4 +210,4 @@ class SettingsManager {
     }
 }
 
-export default SettingsManager;
+module.exports = SettingsManager;

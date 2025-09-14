@@ -1,16 +1,14 @@
-import { app, BrowserWindow } from 'electron';
-import { join, dirname } from 'path';
-import { fileURLToPath } from 'url';
-import SettingsManager from './services/settingsManager.js';
-import TTSService from './services/ttsService.js';
-import FileManager from './services/fileManager.js';
-import AudioProcessor from './services/audioProcessor.js';
-import ErrorHandler from './services/errorHandler.js';
-import IPCHandlers from './ipc/ipcHandlers.js';
-import PerformanceMonitor from './utils/performanceMonitor.js';
+const { app, BrowserWindow } = require('electron');
+const { join } = require('path');
+const SettingsManager = require('./services/settingsManager.js');
+const TTSService = require('./services/ttsService.js');
+const FileManager = require('./services/fileManager.js');
+const AudioProcessor = require('./services/audioProcessor.js');
+const ErrorHandler = require('./services/errorHandler.js');
+const IPCHandlers = require('./ipc/ipcHandlers.js');
+const PerformanceMonitor = require('./utils/performanceMonitor.js');
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+// __dirname is available in CommonJS
 
 // Keep a global reference of the window object
 let mainWindow;

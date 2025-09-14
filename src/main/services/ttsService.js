@@ -1,8 +1,8 @@
-import { spawn } from 'child_process';
-import fs from 'fs';
-import path from 'path';
-import { EventEmitter } from 'events';
-import ErrorHandler from './errorHandler.js';
+const { spawn } = require('child_process');
+const fs = require('fs');
+const path = require('path');
+const { EventEmitter } = require('events');
+const ErrorHandler = require('./errorHandler.js');
 
 /**
  * TTS Service for converting text to speech using Microsoft Edge TTS
@@ -468,4 +468,4 @@ class TTSService extends EventEmitter {
     }
 }
 
-export default TTSService;
+module.exports = TTSService;

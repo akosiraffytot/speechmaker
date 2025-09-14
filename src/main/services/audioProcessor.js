@@ -1,8 +1,8 @@
-import ffmpeg from 'fluent-ffmpeg';
-import { promises as fs } from 'fs';
-import path from 'path';
-import { spawn } from 'child_process';
-import ErrorHandler from './errorHandler.js';
+const ffmpeg = require('fluent-ffmpeg');
+const { promises: fs } = require('fs');
+const path = require('path');
+const { spawn } = require('child_process');
+const ErrorHandler = require('./errorHandler.js');
 
 /**
  * Audio Processor Service
@@ -401,4 +401,4 @@ class AudioProcessor {
     }
 }
 
-export default AudioProcessor;
+module.exports = AudioProcessor;

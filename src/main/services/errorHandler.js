@@ -1,6 +1,6 @@
-import { app, dialog } from 'electron';
-import { promises as fs } from 'fs';
-import { join } from 'path';
+const { app, dialog } = require('electron');
+const { promises: fs } = require('fs');
+const { join } = require('path');
 
 /**
  * Centralized Error Handler Service
@@ -686,4 +686,4 @@ class ErrorHandler {
     }
 }
 
-export default ErrorHandler;
+module.exports = ErrorHandler;

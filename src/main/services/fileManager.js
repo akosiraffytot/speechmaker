@@ -1,8 +1,8 @@
-import fs from 'fs/promises';
-import { existsSync, accessSync, constants, statSync } from 'fs';
-import path from 'path';
-import os from 'os';
-import ErrorHandler from './errorHandler.js';
+const fs = require('fs/promises');
+const { existsSync, accessSync, constants, statSync } = require('fs');
+const path = require('path');
+const os = require('os');
+const ErrorHandler = require('./errorHandler.js');
 
 /**
  * File Manager Service
@@ -257,4 +257,4 @@ class FileManager {
     }
 }
 
-export default FileManager;
+module.exports = FileManager;

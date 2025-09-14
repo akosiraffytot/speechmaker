@@ -191,4 +191,4 @@ class PerformanceMonitor {
     }
 }
 
-export default PerformanceMonitor;
+module.exports = PerformanceMonitor;
