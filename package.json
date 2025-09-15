@@ -36,6 +36,7 @@
     "vitest": "^1.0.0"
   },
   "dependencies": {
+    "@andresaya/edge-tts": "^1.4.0",
     "edge-tts": "^1.0.1",
     "fluent-ffmpeg": "^2.1.2"
   },

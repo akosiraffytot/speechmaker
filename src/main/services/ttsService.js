@@ -8,6 +8,16 @@ const ErrorHandler = require('./errorHandler.js');
 let edgeTTS;
 let edgeTTSImportPromise;
 
+// Polyfill crypto for edge-tts library
+const { webcrypto } = require('node:crypto');
+if (typeof globalThis.crypto === 'undefined') {
+    globalThis.crypto = webcrypto;
+}
+// Also set it on global for compatibility
+if (typeof global.crypto === 'undefined') {
+    global.crypto = webcrypto;
+}
+
 /**
  * TTS Service for converting text to speech using Microsoft Edge TTS
  * Implements requirements 1.1, 1.2, 1.3, and 2.3
@@ -48,10 +58,27 @@ class TTSService extends EventEmitter {
      */
     async importEdgeTTS() {
         try {
-            // Try to import the compiled JavaScript version first
-            edgeTTS = await import('edge-tts/out/index.js');
-            console.log('edge-tts library loaded successfully');
-            return edgeTTS;
+            // Ensure crypto is available before importing edge-tts
+            const { webcrypto } = require('node:crypto');
+            if (typeof globalThis.crypto === 'undefined') {
+                globalThis.crypto = webcrypto;
+            }
+            if (typeof global.crypto === 'undefined') {
+                global.crypto = webcrypto;
+            }
+
+            // Try the newer @andresaya/edge-tts package first
+            try {
+                edgeTTS = await import('@andresaya/edge-tts');
+                console.log('edge-tts library loaded successfully (@andresaya/edge-tts)');
+                return edgeTTS;
+            } catch (newError) {
+                console.warn('Failed to load @andresaya/edge-tts, trying fallback:', newError.message);
+                // Fallback to original package
+                edgeTTS = await import('edge-tts/out/index.js');
+                console.log('edge-tts library loaded successfully (fallback)');
+                return edgeTTS;
+            }
         } catch (error) {
             console.warn('Failed to load edge-tts library:', error.message);
             throw new Error(`edge-tts library not available: ${error.message}`);
@@ -222,11 +249,20 @@ class TTSService extends EventEmitter {
             // Ensure edge-tts is loaded
             await this.initializeEdgeTTS();
 
-            if (!edgeTTS || !edgeTTS.getVoices) {
+            let voices;
+
+            // Check if it's the new @andresaya/edge-tts package (class-based)
+            if (edgeTTS && edgeTTS.EdgeTTS) {
+                const ttsInstance = new edgeTTS.EdgeTTS();
+                voices = await ttsInstance.getVoices();
+            }
+            // Check if it's the original edge-tts package (function-based)
+            else if (edgeTTS && edgeTTS.getVoices) {
+                voices = await edgeTTS.getVoices();
+            }
+            else {
                 throw new Error('edge-tts library not available or not properly imported');
             }
-
-            const voices = await edgeTTS.getVoices();
 
             if (!voices || voices.length === 0) {
                 throw new Error('No voices returned from edge-tts service');
@@ -364,23 +400,43 @@ class TTSService extends EventEmitter {
             // Ensure edge-tts is loaded
             await this.initializeEdgeTTS();
 
-            if (!edgeTTS || !edgeTTS.ttsSave) {
-                throw new Error('edge-tts library not available or not properly imported');
-            }
-
             // Calculate rate parameter for edge-tts (percentage change from normal speed)
             const ratePercent = Math.round((speed - 1.0) * 100);
             const rateParam = ratePercent >= 0 ? `+${ratePercent}%` : `${ratePercent}%`;
 
-            const options = {
-                voice: voiceId,
-                rate: rateParam,
-                volume: '+0%',
-                pitch: '+0Hz'
-            };
+            // Check if it's the new @andresaya/edge-tts package (class-based)
+            if (edgeTTS && edgeTTS.EdgeTTS) {
+                const ttsInstance = new edgeTTS.EdgeTTS();
 
-            // Use the edge-tts library to save audio directly to file
-            await edgeTTS.ttsSave(text, outputPath, options);
+                const options = {
+                    rate: rateParam,
+                    volume: '+0%',
+                    pitch: '+0Hz'
+                };
+
+                // Use the new API to synthesize
+                await ttsInstance.synthesize(text, voiceId, options);
+
+                // Get the audio buffer and write to file
+                const audioBuffer = ttsInstance.toBuffer();
+                const fs = require('fs').promises;
+                await fs.writeFile(outputPath, audioBuffer);
+            }
+            // Check if it's the original edge-tts package (function-based)
+            else if (edgeTTS && edgeTTS.ttsSave) {
+                const options = {
+                    voice: voiceId,
+                    rate: rateParam,
+                    volume: '+0%',
+                    pitch: '+0Hz'
+                };
+
+                // Use the original API
+                await edgeTTS.ttsSave(text, outputPath, options);
+            }
+            else {
+                throw new Error('edge-tts library not available or not properly imported');
+            }
 
             this.emit('conversionComplete', { outputPath, text: text.substring(0, 50) + '...' });
             return outputPath;
