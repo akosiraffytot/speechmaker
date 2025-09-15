@@ -162,6 +162,76 @@ class BuildValidator {
     }
   }
 
+  checkFFmpegBundle() {
+    this.log('Checking FFmpeg bundle configuration...');
+    
+    // Check FFmpeg directory structure
+    const requiredFFmpegPaths = [
+      'resources/ffmpeg',
+      'resources/ffmpeg/win32',
+      'resources/ffmpeg/win32/x64',
+      'resources/ffmpeg/win32/ia32',
+      'resources/ffmpeg/win32/x64/ffmpeg.exe',
+      'resources/ffmpeg/win32/ia32/ffmpeg.exe',
+      'resources/ffmpeg/LICENSE.txt'
+    ];
+
+    let ffmpegPathsExist = true;
+    requiredFFmpegPaths.forEach(ffmpegPath => {
+      if (!fs.existsSync(ffmpegPath)) {
+        this.addError(`FFmpeg bundle path missing: ${ffmpegPath}`);
+        ffmpegPathsExist = false;
+      }
+    });
+
+    if (ffmpegPathsExist) {
+      this.log('FFmpeg bundle directory structure ✓');
+      
+      // Check FFmpeg executable functionality
+      try {
+        const ffmpegPath = path.join('resources', 'ffmpeg', 'win32', 'x64', 'ffmpeg.exe');
+        const output = execSync(`"${ffmpegPath}" -version`, { encoding: 'utf8', timeout: 5000 });
+        
+        if (output.includes('ffmpeg version')) {
+          this.log('FFmpeg executable functionality ✓');
+          
+          // Check file sizes for reasonable bundle size
+          const x64Size = fs.statSync('resources/ffmpeg/win32/x64/ffmpeg.exe').size;
+          const ia32Size = fs.statSync('resources/ffmpeg/win32/ia32/ffmpeg.exe').size;
+          const totalSize = (x64Size + ia32Size) / 1024 / 1024;
+          
+          this.log(`FFmpeg bundle size: ${totalSize.toFixed(2)} MB`);
+          
+          if (totalSize > 200) {
+            this.addWarning(`FFmpeg bundle is large (${totalSize.toFixed(2)} MB) - consider optimization`);
+          }
+        } else {
+          this.addError('FFmpeg executable test failed - invalid output');
+        }
+      } catch (error) {
+        this.addError(`FFmpeg executable test failed: ${error.message}`);
+      }
+    }
+
+    // Check package.json extraResources configuration
+    try {
+      const packageJson = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+      const extraResources = packageJson.build?.extraResources || [];
+      
+      const ffmpegResource = extraResources.find(resource => 
+        resource.from === 'resources/ffmpeg/' && resource.to === 'resources/ffmpeg/'
+      );
+      
+      if (ffmpegResource) {
+        this.log('FFmpeg extraResources configuration ✓');
+      } else {
+        this.addError('FFmpeg extraResources configuration missing in package.json');
+      }
+    } catch (error) {
+      this.addError(`Failed to check FFmpeg configuration: ${error.message}`);
+    }
+  }
+
   runTests() {
     try {
       this.log('Running tests...');
@@ -208,6 +278,7 @@ class BuildValidator {
     this.checkIconFiles();
     this.checkDependencies();
     this.checkBuildConfiguration();
+    this.checkFFmpegBundle();
     this.checkGitRepository();
     this.checkDiskSpace();
     

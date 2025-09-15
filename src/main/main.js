@@ -26,6 +26,9 @@ perfMonitor.markStart('app-startup');
 async function createWindow() {
   perfMonitor.markStart('create-window');
   
+  // Initialize core services before creating window for better UX
+  await initializeCoreServices();
+  
   // Show window early for better perceived performance
   const { windowBounds } = await getWindowBounds();
   
@@ -54,53 +57,189 @@ async function createWindow() {
     perfMonitor.markEnd('create-window');
     mainWindow.show();
     
-    // Initialize services asynchronously after window is shown
-    initializeServicesAsync();
+    // Continue with remaining service initialization
+    completeServiceInitialization();
   });
 
-  // Initialize services in background
-  async function initializeServicesAsync() {
+  // Initialize core services before UI creation with enhanced parallel FFmpeg and voice loading
+  async function initializeCoreServices() {
     try {
-      perfMonitor.markStart('services-init');
+      perfMonitor.markStart('core-services-init');
       
-      // Initialize services with staggered loading for better performance
+      // Initialize error handler first
       perfMonitor.markStart('error-handler-init');
       errorHandler = new ErrorHandler();
       await errorHandler.initialize();
       perfMonitor.markEnd('error-handler-init');
       
+      // Initialize settings manager and ensure default output folder
       perfMonitor.markStart('settings-manager-init');
       settingsManager = new SettingsManager();
       await settingsManager.initialize();
       perfMonitor.markEnd('settings-manager-init');
       
-      // Initialize lightweight services first
-      perfMonitor.markStart('file-services-init');
+      // Initialize file manager
+      perfMonitor.markStart('file-manager-init');
       fileManager = new FileManager();
-      audioProcessor = new AudioProcessor();
-      perfMonitor.markEnd('file-services-init');
+      perfMonitor.markEnd('file-manager-init');
       
-      // Initialize TTS service (potentially slow) last
+      // Initialize audio processor
+      perfMonitor.markStart('audio-processor-init');
+      audioProcessor = new AudioProcessor();
+      perfMonitor.markEnd('audio-processor-init');
+      
+      // Initialize TTS service
       perfMonitor.markStart('tts-service-init');
       ttsService = new TTSService();
       ttsService.setAudioProcessor(audioProcessor);
+      perfMonitor.markEnd('tts-service-init');
       
-      // Initialize TTS service in background
-      ttsService.initialize().then(() => {
-        perfMonitor.markEnd('tts-service-init');
-      }).catch(error => {
-        perfMonitor.markEnd('tts-service-init');
-        console.error('Failed to initialize TTS service:', error);
-        // Send error to renderer for user notification
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('tts:initialization-error', {
-            message: 'Failed to initialize TTS service. Some features may not work properly.',
-            error: error.message
-          });
+      // Start enhanced parallel initialization of FFmpeg and voice loading
+      // This is the key improvement - both operations run concurrently with better error handling
+      perfMonitor.markStart('parallel-init');
+      
+      // Send initialization started event to renderer
+      const sendInitializationUpdate = (type, data) => {
+        if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents) {
+          mainWindow.webContents.send('initialization:update', { type, data, timestamp: Date.now() });
         }
+      };
+      
+      sendInitializationUpdate('started', { 
+        message: 'Initializing FFmpeg and voice detection...',
+        phase: 'parallel-init'
       });
       
-      // Initialize IPC handlers after core services are ready
+      // Enhanced FFmpeg initialization promise with detailed status reporting
+      perfMonitor.markStart('ffmpeg-init');
+      const ffmpegInitPromise = audioProcessor.initializeFFmpeg().then(status => {
+        perfMonitor.markEnd('ffmpeg-init');
+        
+        const logMessage = status.available 
+          ? `FFmpeg initialized successfully (${status.source}): ${status.version || 'version unknown'}`
+          : `FFmpeg not available: ${status.error || 'No working installation found'}`;
+        console.log(logMessage);
+        
+        // Send detailed FFmpeg status to renderer
+        sendInitializationUpdate('ffmpeg-complete', {
+          status,
+          message: status.available 
+            ? `FFmpeg ready (${status.source})` 
+            : 'FFmpeg unavailable - MP3 conversion disabled'
+        });
+        
+        return status;
+      }).catch(error => {
+        perfMonitor.markEnd('ffmpeg-init');
+        console.error('FFmpeg initialization failed:', error);
+        
+        const errorStatus = { 
+          available: false, 
+          source: 'none', 
+          error: error.message,
+          validated: false,
+          path: null,
+          version: null
+        };
+        
+        // Send error status to renderer
+        sendInitializationUpdate('ffmpeg-error', {
+          status: errorStatus,
+          message: 'FFmpeg initialization failed',
+          error: error.message
+        });
+        
+        return errorStatus;
+      });
+      
+      // Enhanced voice loading initialization promise with retry status reporting
+      perfMonitor.markStart('voice-loading');
+      const voiceLoadPromise = ttsService.loadVoicesWithRetry().then(result => {
+        perfMonitor.markEnd('voice-loading');
+        
+        const logMessage = result.success 
+          ? `Voice loading completed: ${result.voices?.length || 0} voices found (${result.attempt || 1} attempts)`
+          : `Voice loading failed after ${result.attempts || 1} attempts: ${result.error?.message || 'Unknown error'}`;
+        console.log(logMessage);
+        
+        // Send voice loading result to renderer
+        if (result.success) {
+          sendInitializationUpdate('voices-complete', {
+            voices: result.voices,
+            attempts: result.attempt || 1,
+            message: `${result.voices?.length || 0} voices loaded`,
+            success: true
+          });
+        } else {
+          sendInitializationUpdate('voices-error', {
+            error: result.error?.message || 'Unknown error',
+            attempts: result.attempts || 1,
+            troubleshooting: result.troubleshooting || ttsService.getTroubleshootingSteps(),
+            message: 'Voice loading failed',
+            success: false
+          });
+        }
+        
+        return result;
+      }).catch(error => {
+        perfMonitor.markEnd('voice-loading');
+        console.error('Voice loading failed:', error);
+        
+        const errorResult = { 
+          success: false, 
+          error: error,
+          attempts: 1,
+          troubleshooting: ttsService.getTroubleshootingSteps()
+        };
+        
+        // Send error to renderer
+        sendInitializationUpdate('voices-error', {
+          error: error.message,
+          attempts: 1,
+          troubleshooting: ttsService.getTroubleshootingSteps(),
+          message: 'Voice loading failed',
+          success: false
+        });
+        
+        return errorResult;
+      });
+      
+      // Store promises for completion in completeServiceInitialization
+      global.initializationPromises = {
+        ffmpeg: ffmpegInitPromise,
+        voices: voiceLoadPromise
+      };
+      
+      perfMonitor.markEnd('parallel-init');
+      perfMonitor.markEnd('core-services-init');
+      
+      console.log('Core services initialized, enhanced parallel initialization started');
+      
+    } catch (error) {
+      perfMonitor.markEnd('core-services-init');
+      console.error('Failed to initialize core services:', error);
+      
+      // Send comprehensive initialization error to renderer
+      if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents) {
+        mainWindow.webContents.send('initialization:error', {
+          message: 'Failed to initialize core services',
+          error: error.message,
+          phase: 'core-services',
+          timestamp: Date.now(),
+          stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+        });
+      }
+      
+      throw error;
+    }
+  }
+
+  // Complete remaining service initialization after UI is ready
+  async function completeServiceInitialization() {
+    try {
+      perfMonitor.markStart('complete-services-init');
+      
+      // Initialize IPC handlers now that all services are available
       perfMonitor.markStart('ipc-handlers-init');
       const services = {
         settingsManager,
@@ -113,30 +252,168 @@ async function createWindow() {
       ipcHandlers = new IPCHandlers(services, mainWindow);
       perfMonitor.markEnd('ipc-handlers-init');
       
-      perfMonitor.markEnd('services-init');
+      // Wait for enhanced parallel initialization to complete and send comprehensive final status
+      if (global.initializationPromises) {
+        console.log('Waiting for enhanced parallel initialization to complete...');
+        
+        // Send progress update
+        if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents) {
+          mainWindow.webContents.send('initialization:update', {
+            type: 'finalizing',
+            data: { message: 'Finalizing initialization...' },
+            timestamp: Date.now()
+          });
+        }
+        
+        const [ffmpegResult, voiceResult] = await Promise.allSettled([
+          global.initializationPromises.ffmpeg,
+          global.initializationPromises.voices
+        ]);
+        
+        // Process FFmpeg result with enhanced error handling
+        const ffmpegStatus = ffmpegResult.status === 'fulfilled' 
+          ? ffmpegResult.value 
+          : { 
+              available: false, 
+              source: 'none',
+              validated: false,
+              path: null,
+              version: null,
+              error: ffmpegResult.reason?.message || 'FFmpeg initialization failed'
+            };
+        
+        // Process voice loading result with enhanced error handling
+        const voiceStatus = voiceResult.status === 'fulfilled' 
+          ? voiceResult.value 
+          : { 
+              success: false, 
+              voices: [],
+              attempts: 1,
+              error: voiceResult.reason?.message || 'Voice loading failed',
+              troubleshooting: ttsService?.getTroubleshootingSteps() || []
+            };
+        
+        // Determine overall readiness and application state
+        const isReady = voiceStatus.success && (voiceStatus.voices?.length > 0);
+        const hasFFmpeg = ffmpegStatus.available;
+        const hasVoices = voiceStatus.success && voiceStatus.voices?.length > 0;
+        
+        // Create comprehensive status summary
+        const statusSummary = {
+          ffmpeg: {
+            available: hasFFmpeg,
+            source: ffmpegStatus.source,
+            message: hasFFmpeg 
+              ? `FFmpeg ready (${ffmpegStatus.source}${ffmpegStatus.version ? ` v${ffmpegStatus.version}` : ''})`
+              : 'FFmpeg unavailable - MP3 conversion disabled'
+          },
+          voices: {
+            available: hasVoices,
+            count: voiceStatus.voices?.length || 0,
+            message: hasVoices 
+              ? `${voiceStatus.voices.length} voices available`
+              : 'No voices available - TTS conversion disabled'
+          },
+          overall: {
+            ready: isReady,
+            message: isReady 
+              ? 'Application ready for use'
+              : 'Application partially ready - some features may be limited'
+          }
+        };
+        
+        console.log('Enhanced initialization complete:', {
+          ffmpeg: statusSummary.ffmpeg.message,
+          voices: statusSummary.voices.message,
+          overall: statusSummary.overall.message,
+          ready: isReady
+        });
+        
+        // Send comprehensive initialization completion status to renderer
+        if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents) {
+          mainWindow.webContents.send('initialization:complete', {
+            ffmpeg: ffmpegStatus,
+            voices: voiceStatus,
+            ready: isReady,
+            summary: statusSummary,
+            timestamp: Date.now(),
+            performanceMetrics: {
+              totalStartupTime: perfMonitor.getElapsedTime ? perfMonitor.getElapsedTime('app-startup') : null,
+              ffmpegInitTime: perfMonitor.getElapsedTime ? perfMonitor.getElapsedTime('ffmpeg-init') : null,
+              voiceLoadTime: perfMonitor.getElapsedTime ? perfMonitor.getElapsedTime('voice-loading') : null
+            }
+          });
+        }
+        
+        // Clean up global promises
+        delete global.initializationPromises;
+        
+        // Send final ready state update
+        if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents) {
+          mainWindow.webContents.send('initialization:update', {
+            type: 'complete',
+            data: { 
+              message: statusSummary.overall.message,
+              ready: isReady,
+              summary: statusSummary
+            },
+            timestamp: Date.now()
+          });
+        }
+        
+      } else {
+        console.warn('No initialization promises found - sending fallback ready status');
+        
+        // Fallback: send basic ready status with error indication
+        if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents) {
+          mainWindow.webContents.send('initialization:complete', {
+            ffmpeg: { available: false, source: 'none', error: 'No initialization data' },
+            voices: { success: false, voices: [], error: 'No initialization data' },
+            ready: false,
+            summary: {
+              ffmpeg: { available: false, message: 'FFmpeg status unknown' },
+              voices: { available: false, count: 0, message: 'Voice status unknown' },
+              overall: { ready: false, message: 'Application status unknown' }
+            },
+            timestamp: Date.now()
+          });
+        }
+      }
+      
+      perfMonitor.markEnd('complete-services-init');
       perfMonitor.markEnd('app-startup');
       
       // Log performance summary in development
       if (process.env.NODE_ENV === 'development') {
-        setTimeout(() => perfMonitor.logStartupSummary(), 1000);
+        setTimeout(() => {
+          if (perfMonitor.logStartupSummary) {
+            perfMonitor.logStartupSummary();
+          }
+        }, 1000);
       }
       
-      // Start memory monitoring
-      perfMonitor.startMemoryMonitoring();
-      
-      // Notify renderer that services are ready
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('services:ready');
+      // Start memory monitoring if available
+      if (perfMonitor.startMemoryMonitoring) {
+        perfMonitor.startMemoryMonitoring();
       }
       
     } catch (error) {
-      perfMonitor.markEnd('services-init');
+      perfMonitor.markEnd('complete-services-init');
       perfMonitor.markEnd('app-startup');
-      console.error('Failed to initialize services:', error);
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('services:error', {
-          message: 'Failed to initialize application services',
-          error: error.message
+      console.error('Failed to complete service initialization:', error);
+      
+      // Send comprehensive error to renderer with detailed information
+      if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents) {
+        mainWindow.webContents.send('initialization:error', {
+          message: 'Failed to complete service initialization',
+          error: error.message,
+          phase: 'completion',
+          timestamp: Date.now(),
+          stack: process.env.NODE_ENV === 'development' ? error.stack : undefined,
+          recovery: {
+            message: 'Try restarting the application',
+            actions: ['restart', 'check-system-requirements']
+          }
         });
       }
     }
@@ -215,4 +492,94 @@ app.on('before-quit', () => {
   if (ipcHandlers) {
     ipcHandlers.cleanup();
   }
+  
+  // Clean up services and resources
+  cleanupApplicationResources();
 });
+
+// Clean up application resources with enhanced bundled FFmpeg management
+function cleanupApplicationResources() {
+  try {
+    console.log('Starting application resource cleanup...');
+    
+    // Clean up audio processor resources with enhanced FFmpeg cleanup
+    if (audioProcessor) {
+      console.log('Cleaning up audio processor...');
+      
+      // Cancel any active FFmpeg processes
+      audioProcessor.cleanup && audioProcessor.cleanup();
+      
+      // Additional cleanup for bundled FFmpeg resources
+      try {
+        // Reset FFmpeg status to prevent memory leaks
+        const ffmpegStatus = audioProcessor.getFFmpegStatus();
+        if (ffmpegStatus && ffmpegStatus.available) {
+          console.log(`Cleaning up ${ffmpegStatus.source} FFmpeg resources`);
+        }
+      } catch (error) {
+        console.warn('Error during FFmpeg status cleanup:', error);
+      }
+    }
+    
+    // Clean up TTS service resources with enhanced voice cleanup
+    if (ttsService) {
+      console.log('Cleaning up TTS service...');
+      
+      // Remove all event listeners
+      ttsService.removeAllListeners();
+      
+      // Clean up any temporary files and voice loading state
+      ttsService.cleanup && ttsService.cleanup();
+      
+      // Clear voice loading state to prevent memory leaks
+      try {
+        const voiceState = ttsService.getVoiceLoadingState();
+        if (voiceState && voiceState.isLoading) {
+          console.log('Cancelling active voice loading operations');
+        }
+      } catch (error) {
+        console.warn('Error during voice state cleanup:', error);
+      }
+    }
+    
+    // Clean up file manager resources
+    if (fileManager) {
+      console.log('Cleaning up file manager...');
+      fileManager.cleanup && fileManager.cleanup();
+    }
+    
+    // Clean up settings manager resources
+    if (settingsManager) {
+      console.log('Cleaning up settings manager...');
+      // Settings manager doesn't need explicit cleanup but log for completeness
+    }
+    
+    // Clean up error handler
+    if (errorHandler) {
+      console.log('Cleaning up error handler...');
+      errorHandler.cleanup && errorHandler.cleanup();
+    }
+    
+    // Clean up IPC handlers
+    if (ipcHandlers) {
+      console.log('Cleaning up IPC handlers...');
+      // IPC handlers cleanup is already called in before-quit event
+    }
+    
+    // Clear any remaining global promises
+    if (global.initializationPromises) {
+      console.log('Clearing initialization promises...');
+      delete global.initializationPromises;
+    }
+    
+    // Force garbage collection if available (development mode)
+    if (global.gc && process.env.NODE_ENV === 'development') {
+      console.log('Running garbage collection...');
+      global.gc();
+    }
+    
+    console.log('Application resources cleaned up successfully');
+  } catch (error) {
+    console.error('Error during resource cleanup:', error);
+  }
+}

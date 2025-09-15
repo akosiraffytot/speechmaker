@@ -117,6 +117,14 @@ try {
             exit 1
         }
         Write-ColorOutput "Build validation passed" -Color "Success"
+        
+        Write-ColorOutput "Running packaging validation..." -Color "Info"
+        npm run validate-packaging
+        if ($LASTEXITCODE -ne 0) {
+            Write-ColorOutput "ERROR: Packaging validation failed" -Color "Error"
+            exit 1
+        }
+        Write-ColorOutput "Packaging validation passed" -Color "Success"
     }
     
     # Run tests unless skipped
@@ -180,6 +188,15 @@ try {
         
         if (Get-ChildItem $portablePath -ErrorAction SilentlyContinue) {
             Write-ColorOutput "✓ Portable executable created" -Color "Success"
+        }
+        
+        # Run post-build validation
+        Write-ColorOutput "Running built application validation..." -Color "Info"
+        npm run validate-built-app
+        if ($LASTEXITCODE -eq 0) {
+            Write-ColorOutput "✓ Built application validation passed" -Color "Success"
+        } else {
+            Write-ColorOutput "⚠ Built application validation had issues" -Color "Warning"
         }
     }
     

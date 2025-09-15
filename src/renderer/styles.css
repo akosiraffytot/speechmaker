@@ -111,6 +111,24 @@ section h2 {
     border-color: #3498db;
 }
 
+#voiceSelect:disabled {
+    background-color: #f8f9fa;
+    color: #6c757d;
+    cursor: not-allowed;
+}
+
+/* Enhanced voice select states */
+#voiceSelect.loading {
+    background-color: #e3f2fd;
+    border-color: #2196f3;
+}
+
+#voiceSelect.error {
+    background-color: #ffebee;
+    border-color: #f44336;
+    color: #d32f2f;
+}
+
 .radio-group {
     display: flex;
     gap: 20px;
@@ -125,6 +143,18 @@ section h2 {
     align-items: center;
     font-weight: normal;
     margin-bottom: 0;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.radio-group input[type="radio"]:disabled + label {
+    opacity: 0.6;
+    cursor: not-allowed;
+    color: #6c757d;
+}
+
+.radio-group input[type="radio"]:disabled + label:hover {
+    opacity: 0.6;
 }
 
 /* Folder Controls */
@@ -734,6 +764,25 @@ Notification System */
     margin-right: 8px;
 }
 
+/* Small loading spinner for inline use */
+.loading-spinner.small {
+    width: 12px;
+    height: 12px;
+    border-width: 1.5px;
+    margin-right: 6px;
+}
+
+/* Colored loading spinners */
+.loading-spinner.blue {
+    border-color: rgba(52, 152, 219, 0.3);
+    border-top-color: #3498db;
+}
+
+.loading-spinner.orange {
+    border-color: rgba(243, 156, 18, 0.3);
+    border-top-color: #f39c12;
+}
+
 @keyframes spin {
     to { transform: rotate(360deg); }
 }
@@ -823,4 +872,179 @@ body {
 .modal {
     backdrop-filter: blur(2px);
     -webkit-backdrop-filter: blur(2px);
+}
+/* State
+Manager specific styles */
+
+/* Voice loading states */
+#voiceSelect.loading {
+    background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="none" stroke="%23999" stroke-width="2" stroke-dasharray="9.42" stroke-dashoffset="9.42"><animateTransform attributeName="transform" type="rotate" values="0 8 8;360 8 8" dur="1s" repeatCount="indefinite"/></circle></svg>');
+    background-repeat: no-repeat;
+    background-position: right 10px center;
+    background-size: 16px 16px;
+}
+
+#voiceSelect.error {
+    border-color: #e74c3c;
+    background-color: #fdf2f2;
+}
+
+/* Voice retry button */
+.voice-retry-btn {
+    background-color: #f39c12;
+    color: white;
+    padding: 8px 16px;
+    border: none;
+    border-radius: 4px;
+    font-size: 12px;
+    cursor: pointer;
+    margin-top: 8px;
+    transition: background-color 0.3s ease;
+}
+
+.voice-retry-btn:hover {
+    background-color: #e67e22;
+}
+
+/* Voice troubleshooting */
+.voice-troubleshooting {
+    background-color: #fff3cd;
+    border: 1px solid #ffeaa7;
+    border-radius: 6px;
+    padding: 15px;
+    margin-top: 10px;
+    font-size: 13px;
+}
+
+.troubleshooting-content h4 {
+    color: #856404;
+    margin-bottom: 8px;
+    font-size: 14px;
+}
+
+.troubleshooting-content p {
+    color: #856404;
+    margin-bottom: 8px;
+}
+
+.troubleshooting-content ul {
+    margin-left: 20px;
+    color: #856404;
+}
+
+.troubleshooting-content li {
+    margin-bottom: 4px;
+}
+
+/* Format option disabled state */
+.radio-group label.disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.radio-group input[type="radio"]:disabled + label {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+/* Status text states */
+#statusText.loading {
+    color: #3498db;
+    font-weight: 500;
+}
+
+#statusText.error {
+    color: #e74c3c;
+    font-weight: 500;
+}
+
+#statusText.ready {
+    color: #27ae60;
+    font-weight: 600;
+}
+
+/* Ready indicator */
+.ready-indicator {
+    display: none;
+    align-items: center;
+    gap: 8px;
+    background-color: #d4edda;
+    color: #155724;
+    padding: 8px 16px;
+    border-radius: 20px;
+    font-size: 14px;
+    font-weight: 500;
+    border: 1px solid #c3e6cb;
+    position: absolute;
+    top: 20px;
+    right: 20px;
+    z-index: 100;
+    opacity: 0;
+    transform: translateY(-10px);
+    transition: all 0.3s ease;
+}
+
+.ready-indicator.show {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+.ready-icon {
+    font-size: 16px;
+    font-weight: bold;
+}
+
+.ready-text {
+    font-size: 13px;
+}
+
+/* Convert button loading state */
+.convert-btn .loading-spinner {
+    margin-right: 8px;
+}
+
+/* Improved loading states */
+.loading-state {
+    position: relative;
+}
+
+.loading-state::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(255, 255, 255, 0.7);
+    border-radius: inherit;
+    pointer-events: none;
+}
+
+/* Animation for state transitions */
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.voice-retry-btn,
+.voice-troubleshooting,
+.ready-indicator {
+    animation: fadeIn 0.3s ease-out;
+}
+
+/* Responsive adjustments for ready indicator */
+@media (max-width: 768px) {
+    .ready-indicator {
+        position: relative;
+        top: auto;
+        right: auto;
+        margin-bottom: 15px;
+        justify-content: center;
+    }
 }

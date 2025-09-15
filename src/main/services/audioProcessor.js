@@ -2,7 +2,10 @@ const ffmpeg = require('fluent-ffmpeg');
 const { promises: fs } = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
+const { promisify } = require('util');
 const ErrorHandler = require('./errorHandler.js');
+
+const execAsync = promisify(require('child_process').exec);
 
 /**
  * Audio Processor Service
@@ -13,6 +16,192 @@ class AudioProcessor {
         this.ffmpegPath = null;
         this.isFFmpegValidated = false;
         this.errorHandler = new ErrorHandler();
+        this.ffmpegStatus = {
+            available: false,
+            source: 'none',
+            path: null,
+            version: null,
+            validated: false,
+            error: null
+        };
+    }
+
+    /**
+     * Gets the path to the bundled FFmpeg executable
+     * @returns {string} Path to bundled FFmpeg executable
+     */
+    getBundledFFmpegPath() {
+        const platform = process.platform;
+        const arch = process.arch;
+        
+        // Get the app root directory (where resources are located)
+        let appRoot;
+        if (process.env.NODE_ENV === 'development') {
+            appRoot = path.join(__dirname, '../../..');
+        } else if (process.resourcesPath) {
+            appRoot = process.resourcesPath;
+        } else {
+            // Fallback for test environments
+            appRoot = path.join(__dirname, '../../..');
+        }
+            
+        return path.join(appRoot, 'resources', 'ffmpeg', platform, arch, 'ffmpeg.exe');
+    }
+
+    /**
+     * Validates FFmpeg executable functionality
+     * @param {string} ffmpegPath - Path to FFmpeg executable to validate
+     * @returns {Promise<{valid: boolean, version: string|null, error: string|null}>}
+     */
+    async validateFFmpeg(ffmpegPath) {
+        if (!ffmpegPath) {
+            return { valid: false, version: null, error: 'No FFmpeg path provided' };
+        }
+
+        try {
+            // Check if file exists
+            await fs.access(ffmpegPath);
+            
+            // Test FFmpeg functionality by running version command
+            const { stdout, stderr } = await execAsync(`"${ffmpegPath}" -version`);
+            
+            if (stdout && stdout.includes('ffmpeg version')) {
+                // Extract version information
+                const versionMatch = stdout.match(/ffmpeg version ([^\s]+)/);
+                const version = versionMatch ? versionMatch[1] : 'unknown';
+                
+                return { valid: true, version, error: null };
+            } else {
+                return { valid: false, version: null, error: 'FFmpeg version check failed' };
+            }
+        } catch (error) {
+            return { 
+                valid: false, 
+                version: null, 
+                error: `FFmpeg validation failed: ${error.message}` 
+            };
+        }
+    }
+
+    /**
+     * Detects system-installed FFmpeg
+     * @returns {Promise<string|null>} Path to system FFmpeg or null if not found
+     */
+    async detectSystemFFmpeg() {
+        try {
+            const { stdout } = await execAsync('where ffmpeg', { timeout: 5000 });
+            const ffmpegPath = stdout.trim().split('\n')[0];
+            return ffmpegPath || null;
+        } catch (error) {
+            // Try alternative detection methods
+            try {
+                const { stdout } = await execAsync('ffmpeg -version', { timeout: 5000 });
+                if (stdout.includes('ffmpeg version')) {
+                    return 'ffmpeg'; // Available in PATH
+                }
+            } catch (pathError) {
+                // FFmpeg not found in system
+            }
+            return null;
+        }
+    }
+
+    /**
+     * Initializes FFmpeg with bundled-first, system-fallback logic
+     * @returns {Promise<{available: boolean, source: string, path: string|null, version: string|null, error: string|null}>}
+     */
+    async initializeFFmpeg() {
+        try {
+            // Reset status
+            this.ffmpegStatus = {
+                available: false,
+                source: 'none',
+                path: null,
+                version: null,
+                validated: false,
+                error: null
+            };
+
+            // Try bundled FFmpeg first
+            const bundledPath = this.getBundledFFmpegPath();
+            const bundledValidation = await this.validateFFmpeg(bundledPath);
+            
+            if (bundledValidation.valid) {
+                this.ffmpegPath = bundledPath;
+                this.isFFmpegValidated = true;
+                this.ffmpegStatus = {
+                    available: true,
+                    source: 'bundled',
+                    path: bundledPath,
+                    version: bundledValidation.version,
+                    validated: true,
+                    error: null
+                };
+                
+                // Set FFmpeg path for fluent-ffmpeg
+                ffmpeg.setFfmpegPath(bundledPath);
+                
+                return this.ffmpegStatus;
+            }
+
+            // Fallback to system FFmpeg
+            const systemPath = await this.detectSystemFFmpeg();
+            if (systemPath) {
+                const systemValidation = await this.validateFFmpeg(systemPath);
+                
+                if (systemValidation.valid) {
+                    this.ffmpegPath = systemPath;
+                    this.isFFmpegValidated = true;
+                    this.ffmpegStatus = {
+                        available: true,
+                        source: 'system',
+                        path: systemPath,
+                        version: systemValidation.version,
+                        validated: true,
+                        error: null
+                    };
+                    
+                    // Set FFmpeg path for fluent-ffmpeg
+                    ffmpeg.setFfmpegPath(systemPath);
+                    
+                    return this.ffmpegStatus;
+                }
+            }
+
+            // No FFmpeg available
+            this.ffmpegPath = null;
+            this.isFFmpegValidated = false;
+            this.ffmpegStatus = {
+                available: false,
+                source: 'none',
+                path: null,
+                version: null,
+                validated: false,
+                error: 'No working FFmpeg installation found'
+            };
+
+            return this.ffmpegStatus;
+
+        } catch (error) {
+            this.ffmpegStatus = {
+                available: false,
+                source: 'none',
+                path: null,
+                version: null,
+                validated: false,
+                error: `FFmpeg initialization failed: ${error.message}`
+            };
+
+            return this.ffmpegStatus;
+        }
+    }
+
+    /**
+     * Gets current FFmpeg status
+     * @returns {Object} Current FFmpeg status object
+     */
+    getFFmpegStatus() {
+        return { ...this.ffmpegStatus };
     }
 
     /**
@@ -20,38 +209,13 @@ class AudioProcessor {
      * @returns {Promise<boolean>} True if FFmpeg is available, false otherwise
      */
     async validateFFmpegInstallation() {
-        if (this.isFFmpegValidated) {
+        if (this.isFFmpegValidated && this.ffmpegStatus.available) {
             return true;
         }
 
-        try {
-            return new Promise((resolve) => {
-                const ffmpegProcess = spawn('ffmpeg', ['-version'], { 
-                    stdio: 'pipe',
-                    shell: true 
-                });
-
-                ffmpegProcess.on('close', (code) => {
-                    this.isFFmpegValidated = code === 0;
-                    resolve(this.isFFmpegValidated);
-                });
-
-                ffmpegProcess.on('error', () => {
-                    this.isFFmpegValidated = false;
-                    resolve(false);
-                });
-
-                // Timeout after 5 seconds
-                setTimeout(() => {
-                    ffmpegProcess.kill();
-                    this.isFFmpegValidated = false;
-                    resolve(false);
-                }, 5000);
-            });
-        } catch (error) {
-            this.isFFmpegValidated = false;
-            return false;
-        }
+        // Use the new initialization logic
+        const status = await this.initializeFFmpeg();
+        return status.available;
     }
 
     /**
@@ -398,6 +562,30 @@ class AudioProcessor {
                 resolve(); // Don't reject on timeout for preview
             }, 10000);
         });
+    }
+
+    /**
+     * Clean up audio processor resources and active processes
+     * Called during application shutdown
+     */
+    cleanup() {
+        try {
+            // Reset FFmpeg status
+            this.ffmpegPath = null;
+            this.isFFmpegValidated = false;
+            this.ffmpegStatus = {
+                available: false,
+                source: 'none',
+                path: null,
+                version: null,
+                validated: false,
+                error: null
+            };
+            
+            console.log('AudioProcessor cleanup completed');
+        } catch (error) {
+            console.error('Error during AudioProcessor cleanup:', error);
+        }
     }
 }
 

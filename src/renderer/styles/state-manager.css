@@ -1,0 +1,583 @@
+/* StateManager specific styles - Additional styles for state management */
+
+/* Voice loading states */
+#voiceSelect.loading {
+    background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="none" stroke="%23999" stroke-width="2" stroke-dasharray="9.42" stroke-dashoffset="9.42"><animateTransform attributeName="transform" type="rotate" values="0 8 8;360 8 8" dur="1s" repeatCount="indefinite"/></circle></svg>');
+    background-repeat: no-repeat;
+    background-position: right 10px center;
+    background-size: 16px 16px;
+    padding-right: 35px;
+}
+
+#voiceSelect.error {
+    border-color: #e74c3c;
+    background-color: #fdf2f2;
+}
+
+/* Voice retry button */
+.voice-retry-btn {
+    background-color: #f39c12;
+    color: white;
+    padding: 8px 16px;
+    border: none;
+    border-radius: 4px;
+    font-size: 12px;
+    cursor: pointer;
+    margin-top: 8px;
+    transition: all 0.3s ease;
+    display: none;
+    align-items: center;
+    gap: 6px;
+}
+
+.voice-retry-btn:hover:not(:disabled) {
+    background-color: #e67e22;
+    transform: translateY(-1px);
+}
+
+.voice-retry-btn:disabled {
+    background-color: #bdc3c7;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.retry-icon {
+    font-size: 14px;
+    display: inline-block;
+    animation: none;
+}
+
+.voice-retry-btn:hover .retry-icon {
+    animation: spin 0.5s ease-in-out;
+}
+
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+/* Voice troubleshooting */
+.voice-troubleshooting {
+    background-color: #fff3cd;
+    border: 1px solid #ffeaa7;
+    border-radius: 6px;
+    padding: 15px;
+    margin-top: 10px;
+    font-size: 13px;
+    display: none;
+}
+
+.troubleshooting-content h4 {
+    color: #856404;
+    margin-bottom: 8px;
+    font-size: 14px;
+}
+
+.troubleshooting-content p {
+    color: #856404;
+    margin-bottom: 8px;
+}
+
+.troubleshooting-content ul {
+    margin-left: 20px;
+    color: #856404;
+}
+
+.troubleshooting-content li {
+    margin-bottom: 4px;
+}
+
+/* Format option disabled state */
+.radio-group label.disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.radio-group input[type="radio"]:disabled + label {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+/* Status text states */
+#statusText.loading {
+    color: #3498db;
+    font-weight: 500;
+}
+
+#statusText.error {
+    color: #e74c3c;
+    font-weight: 500;
+}
+
+#statusText.ready {
+    color: #27ae60;
+    font-weight: 600;
+}
+
+/* Ready indicator */
+.ready-indicator {
+    display: none;
+    align-items: center;
+    gap: 8px;
+    background-color: #d4edda;
+    color: #155724;
+    padding: 8px 16px;
+    border-radius: 20px;
+    font-size: 14px;
+    font-weight: 500;
+    border: 1px solid #c3e6cb;
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    z-index: 100;
+    opacity: 0;
+    transform: translateY(-10px);
+    transition: all 0.3s ease;
+}
+
+.ready-indicator.show {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+.ready-icon {
+    font-size: 16px;
+    font-weight: bold;
+}
+
+.ready-text {
+    font-size: 13px;
+}
+
+/* Convert button loading state */
+.convert-btn .loading-spinner {
+    margin-right: 8px;
+}
+
+/* Improved loading states */
+.loading-state {
+    position: relative;
+}
+
+.loading-state::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(255, 255, 255, 0.7);
+    border-radius: inherit;
+    pointer-events: none;
+}
+
+/* Animation for state transitions */
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.voice-retry-btn,
+.voice-troubleshooting,
+.ready-indicator {
+    animation: fadeIn 0.3s ease-out;
+}
+
+/* Voice loading indicator */
+.voice-loading-indicator {
+    background-color: #e3f2fd;
+    border: 1px solid #bbdefb;
+    border-radius: 6px;
+    padding: 12px;
+    margin-top: 8px;
+    font-size: 13px;
+    display: none;
+}
+
+.loading-content {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.loading-text {
+    color: #1976d2;
+    font-weight: 500;
+}
+
+/* FFmpeg status indicator */
+.ffmpeg-status-indicator {
+    margin-top: 8px;
+    padding: 8px 12px;
+    border-radius: 4px;
+    font-size: 12px;
+    display: none;
+}
+
+.status-content {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.status-success {
+    background-color: #d4edda;
+    color: #155724;
+    border: 1px solid #c3e6cb;
+}
+
+.status-warning {
+    background-color: #fff3cd;
+    color: #856404;
+    border: 1px solid #ffeaa7;
+}
+
+.status-icon {
+    font-size: 14px;
+    font-weight: bold;
+}
+
+.status-text {
+    font-weight: 500;
+    line-height: 1.3;
+}
+
+/* Enhanced tooltips for format options */
+.radio-group label[title] {
+    position: relative;
+    cursor: help;
+}
+
+.radio-group label.disabled[title]:hover::after {
+    content: attr(title);
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    background-color: #333;
+    color: white;
+    padding: 8px 12px;
+    border-radius: 4px;
+    font-size: 12px;
+    white-space: nowrap;
+    z-index: 1000;
+    margin-bottom: 5px;
+    max-width: 250px;
+    white-space: normal;
+    text-align: center;
+    line-height: 1.3;
+}
+
+.radio-group label.disabled[title]:hover::before {
+    content: '';
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    border: 5px solid transparent;
+    border-top-color: #333;
+    margin-bottom: -5px;
+    z-index: 1001;
+}
+
+/* Enhanced format option styling */
+.radio-group label.enabled {
+    background-color: #f8fff8;
+    border: 1px solid #d4edda;
+    border-radius: 4px;
+    padding: 8px 12px;
+    margin: 2px 0;
+    transition: all 0.3s ease;
+}
+
+.radio-group label.enabled:hover {
+    background-color: #e8f5e8;
+    border-color: #28a745;
+}
+
+.radio-group label.disabled {
+    background-color: #f8f9fa;
+    border: 1px solid #e9ecef;
+    border-radius: 4px;
+    padding: 8px 12px;
+    margin: 2px 0;
+    opacity: 0.6;
+    position: relative;
+}
+
+/* Format availability indicator */
+.format-availability-indicator {
+    margin-top: 8px;
+    padding: 8px 12px;
+    border-radius: 4px;
+    font-size: 12px;
+    display: none;
+    animation: slideInDown 0.3s ease-out;
+}
+
+.format-availability-indicator.success {
+    background-color: #d4edda;
+    color: #155724;
+    border: 1px solid #c3e6cb;
+}
+
+.format-availability-indicator.warning {
+    background-color: #fff3cd;
+    color: #856404;
+    border: 1px solid #ffeaa7;
+}
+
+.availability-content {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.availability-icon {
+    font-size: 14px;
+    font-weight: bold;
+}
+
+.availability-text {
+    font-weight: 500;
+    line-height: 1.3;
+}
+
+/* Format container styling based on MP3 availability */
+.radio-group.mp3-available {
+    border: 1px solid #d4edda;
+    border-radius: 6px;
+    padding: 12px;
+    background-color: #f8fff8;
+}
+
+.radio-group.mp3-unavailable {
+    border: 1px solid #ffeaa7;
+    border-radius: 6px;
+    padding: 12px;
+    background-color: #fffef5;
+}
+
+/* Format change notification */
+.format-change-notification {
+    background-color: #cce7ff;
+    border: 1px solid #99d3ff;
+    border-radius: 4px;
+    padding: 8px 12px;
+    margin-top: 8px;
+    font-size: 12px;
+    opacity: 0;
+    transform: translateY(-10px);
+    transition: all 0.3s ease;
+}
+
+.format-change-notification.show {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+.format-change-notification .notification-content {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.format-change-notification .notification-icon {
+    font-size: 14px;
+}
+
+.format-change-notification .notification-message {
+    color: #0066cc;
+    font-weight: 500;
+}
+
+/* Format status notifications */
+.format-status-notification {
+    position: fixed;
+    top: 80px;
+    right: 20px;
+    min-width: 300px;
+    max-width: 400px;
+    background-color: white;
+    border-radius: 6px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    transform: translateX(100%);
+    transition: transform 0.3s ease;
+    z-index: 1100;
+    border-left: 4px solid #3498db;
+}
+
+.format-status-notification.show {
+    transform: translateX(0);
+}
+
+.format-status-notification.success {
+    border-left-color: #28a745;
+}
+
+.format-status-notification.warning {
+    border-left-color: #ffc107;
+}
+
+.format-status-notification.error {
+    border-left-color: #dc3545;
+}
+
+.format-status-notification .notification-content {
+    display: flex;
+    align-items: flex-start;
+    padding: 12px;
+    gap: 10px;
+}
+
+.format-status-notification .notification-icon {
+    font-size: 16px;
+    font-weight: bold;
+    min-width: 18px;
+    margin-top: 2px;
+}
+
+.format-status-notification.success .notification-icon {
+    color: #28a745;
+}
+
+.format-status-notification.warning .notification-icon {
+    color: #ffc107;
+}
+
+.format-status-notification.error .notification-icon {
+    color: #dc3545;
+}
+
+.format-status-notification .notification-text {
+    flex: 1;
+}
+
+.format-status-notification .notification-message {
+    color: #2c3e50;
+    font-size: 14px;
+    font-weight: 500;
+    margin-bottom: 4px;
+}
+
+.format-status-notification .notification-details {
+    color: #6c757d;
+    font-size: 12px;
+    line-height: 1.3;
+}
+
+.format-status-notification .notification-close {
+    background: none;
+    border: none;
+    font-size: 16px;
+    color: #95a5a6;
+    cursor: pointer;
+    padding: 0;
+    width: 18px;
+    height: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-top: 2px;
+}
+
+.format-status-notification .notification-close:hover {
+    color: #7f8c8d;
+}
+
+/* Enhanced loading spinner */
+.loading-spinner {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-radius: 50%;
+    border-top-color: currentColor;
+    animation: spin 1s linear infinite;
+}
+
+/* Initialization status enhancements */
+#statusText.loading {
+    position: relative;
+}
+
+#statusText.loading::before {
+    content: '';
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border: 2px solid rgba(52, 152, 219, 0.3);
+    border-radius: 50%;
+    border-top-color: #3498db;
+    animation: spin 1s linear infinite;
+    margin-right: 8px;
+    vertical-align: middle;
+}
+
+/* Improved visual feedback for disabled states */
+.radio-group input[type="radio"]:disabled + label {
+    position: relative;
+}
+
+.radio-group input[type="radio"]:disabled + label::after {
+    content: '🔒';
+    position: absolute;
+    right: -20px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 12px;
+    opacity: 0.6;
+}
+
+/* Animation improvements */
+.voice-loading-indicator,
+.ffmpeg-status-indicator {
+    animation: slideInDown 0.3s ease-out;
+}
+
+@keyframes slideInDown {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Responsive adjustments for ready indicator */
+@media (max-width: 768px) {
+    .ready-indicator {
+        position: relative;
+        top: auto;
+        right: auto;
+        margin-bottom: 15px;
+        justify-content: center;
+    }
+    
+    .voice-loading-indicator,
+    .ffmpeg-status-indicator {
+        font-size: 11px;
+        padding: 8px;
+    }
+    
+    .radio-group label.disabled[title]:hover::after {
+        position: fixed;
+        bottom: 20px;
+        left: 20px;
+        right: 20px;
+        transform: none;
+        max-width: none;
+    }
+    
+    .radio-group label.disabled[title]:hover::before {
+        display: none;
+    }
+}

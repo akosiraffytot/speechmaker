@@ -53,6 +53,15 @@ if %errorlevel% neq 0 (
     pause
     exit /b 1
 )
+
+echo Running packaging validation...
+npm run validate-packaging
+if %errorlevel% neq 0 (
+    echo ERROR: Packaging validation failed
+    echo Please fix the issues above before building
+    pause
+    exit /b 1
+)
 echo.
 
 REM Create distribution builds
@@ -83,6 +92,15 @@ if exist "dist" (
     for /f "tokens=3" %%a in ('dir /s dist\*.exe ^| find "File(s)"') do set totalsize=%%a
     echo Total size: %totalsize% bytes
     echo.
+    
+    REM Run post-build validation
+    echo Running built application validation...
+    npm run validate-built-app
+    if %errorlevel% equ 0 (
+        echo Built application validation passed
+    ) else (
+        echo Built application validation had issues
+    )
 )
 
 echo Build artifacts are ready for distribution!

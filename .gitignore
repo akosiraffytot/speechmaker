@@ -98,3 +98,6 @@ release/
 # Application specific
 *.log
 settings.json
+
+# Keep FFmpeg resources
+!resources/
