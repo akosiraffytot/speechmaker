@@ -23,12 +23,12 @@ class FileManager {
      * @throws {Error} - If file is invalid, unreadable, or too large
      */
     async readTextFile(filePath) {
-        try {
-            // Validate file path
-            if (!filePath || typeof filePath !== 'string') {
-                throw new Error('Invalid file path provided');
-            }
+        // Validate file path
+        if (!filePath || typeof filePath !== 'string') {
+            throw new Error('Invalid file path provided');
+        }
 
+        try {
             // Check if file exists
             if (!existsSync(filePath)) {
                 throw new Error(`File not found: ${filePath}`);
