@@ -15,11 +15,21 @@ class TTSService extends EventEmitter {
         this.maxChunkLength = 5000; // Maximum characters per chunk to prevent memory issues
         this.isInitialized = false;
         this.errorHandler = new ErrorHandler();
+        
+        // Voice loading state management
+        this.voiceLoadingState = {
+            isLoading: false,
+            currentAttempt: 0,
+            maxAttempts: 3,
+            lastError: null,
+            retryDelay: 0
+        };
     }
 
     /**
-     * Initialize the TTS service and load available voices
+     * Initialize the TTS service and load available voices with retry mechanism
      * Requirement 1.1: Detect and list all available Windows TTS voices
+     * Requirement 2.1, 2.2: Use retry mechanism for reliable voice loading
      */
     async initialize() {
         if (this.isInitialized) {
@@ -27,9 +37,24 @@ class TTSService extends EventEmitter {
         }
 
         try {
-            await this.loadAvailableVoices();
-            this.isInitialized = true;
-            this.emit('initialized');
+            const result = await this.loadVoicesWithRetry();
+            
+            if (result.success) {
+                this.availableVoices = result.voices;
+                this.isInitialized = true;
+                this.emit('initialized', {
+                    voiceCount: result.voices.length,
+                    attempts: result.attempt
+                });
+            } else {
+                const enhancedError = this.errorHandler.handleTTSVoiceError(result.error, { 
+                    operation: 'initialize',
+                    attempts: result.attempts,
+                    troubleshooting: result.troubleshooting
+                });
+                this.emit('error', enhancedError);
+                throw enhancedError;
+            }
         } catch (error) {
             const enhancedError = this.errorHandler.handleTTSVoiceError(error, { operation: 'initialize' });
             this.emit('error', enhancedError);
@@ -46,6 +71,114 @@ class TTSService extends EventEmitter {
             await this.initialize();
         }
         return this.availableVoices;
+    }
+
+    /**
+     * Load available voices with retry mechanism and exponential backoff
+     * Requirement 2.1, 2.2: Retry voice loading with exponential backoff
+     */
+    async loadVoicesWithRetry(maxRetries = 3) {
+        // Update state management
+        this.voiceLoadingState.isLoading = true;
+        this.voiceLoadingState.maxAttempts = maxRetries;
+        this.voiceLoadingState.currentAttempt = 0;
+        this.voiceLoadingState.lastError = null;
+        
+        this.emit('voiceLoadingStarted', {
+            maxAttempts: maxRetries
+        });
+        
+        let lastError;
+        
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            this.voiceLoadingState.currentAttempt = attempt;
+            
+            try {
+                this.emit('voiceLoadingAttempt', {
+                    attempt,
+                    maxAttempts: maxRetries
+                });
+                
+                const voices = await this.loadAvailableVoices();
+                if (voices && voices.length > 0) {
+                    // Success - reset state
+                    this.voiceLoadingState.isLoading = false;
+                    this.voiceLoadingState.lastError = null;
+                    
+                    this.emit('voiceLoadingSuccess', {
+                        voiceCount: voices.length,
+                        attempt,
+                        totalAttempts: maxRetries
+                    });
+                    
+                    return { 
+                        success: true, 
+                        voices, 
+                        attempt,
+                        totalAttempts: maxRetries
+                    };
+                }
+            } catch (error) {
+                lastError = error;
+                this.voiceLoadingState.lastError = error;
+                
+                // If this isn't the last attempt, wait before retrying
+                if (attempt < maxRetries) {
+                    const delay = Math.pow(2, attempt) * 1000; // Exponential backoff: 2s, 4s, 8s
+                    this.voiceLoadingState.retryDelay = delay;
+                    
+                    this.emit('voiceLoadRetry', {
+                        attempt,
+                        maxRetries,
+                        delay,
+                        error: error.message,
+                        nextRetryIn: delay / 1000
+                    });
+                    
+                    await this.sleep(delay);
+                }
+            }
+        }
+        
+        // All retries failed - update state
+        this.voiceLoadingState.isLoading = false;
+        
+        this.emit('voiceLoadingFailed', {
+            attempts: maxRetries,
+            error: lastError?.message,
+            troubleshooting: this.getTroubleshootingSteps()
+        });
+        
+        return { 
+            success: false, 
+            error: lastError, 
+            attempts: maxRetries,
+            troubleshooting: this.getTroubleshootingSteps()
+        };
+    }
+
+    /**
+     * Utility function to sleep for a specified number of milliseconds
+     * Used for retry delays with exponential backoff
+     */
+    async sleep(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    /**
+     * Get troubleshooting steps for voice loading failures
+     * Requirement 2.3, 2.4: Provide user guidance for voice loading issues
+     */
+    getTroubleshootingSteps() {
+        return [
+            'Ensure Windows Speech Platform is installed and enabled',
+            'Check Windows TTS settings in Control Panel > Speech',
+            'Verify that edge-tts is properly installed (npm install -g edge-tts)',
+            'Restart the application as administrator',
+            'Check Windows updates and install any pending updates',
+            'Try running "edge-tts --list-voices" in command prompt to test manually',
+            'Ensure no antivirus software is blocking the edge-tts executable'
+        ];
     }
 
     /**
@@ -457,14 +590,69 @@ class TTSService extends EventEmitter {
     }
 
     /**
+     * Get current voice loading state
+     * Used for UI state management and user feedback
+     */
+    getVoiceLoadingState() {
+        return {
+            ...this.voiceLoadingState,
+            troubleshootingSteps: this.getTroubleshootingSteps()
+        };
+    }
+
+    /**
+     * Manually retry voice loading
+     * Allows users to retry after initial failure
+     */
+    async retryVoiceLoading(maxRetries = 3) {
+        // Reset initialization state to allow retry
+        this.isInitialized = false;
+        this.availableVoices = [];
+        
+        return await this.initialize();
+    }
+
+    /**
      * Get service status and statistics
      */
     getStatus() {
         return {
             isInitialized: this.isInitialized,
             voiceCount: this.availableVoices.length,
-            maxChunkLength: this.maxChunkLength
+            maxChunkLength: this.maxChunkLength,
+            voiceLoadingState: this.voiceLoadingState
         };
+    }
+
+    /**
+     * Clean up TTS service resources
+     * Called during application shutdown
+     */
+    cleanup() {
+        try {
+            // Remove all event listeners
+            this.removeAllListeners();
+            
+            // Reset initialization state
+            this.isInitialized = false;
+            this.availableVoices = [];
+            
+            // Reset voice loading state
+            this.voiceLoadingState = {
+                isLoading: false,
+                currentAttempt: 0,
+                maxAttempts: 3,
+                lastError: null,
+                retryDelay: 0
+            };
+            
+            // Clear audio processor reference
+            this.audioProcessor = null;
+            
+            console.log('TTSService cleanup completed');
+        } catch (error) {
+            console.error('Error during TTSService cleanup:', error);
+        }
     }
 }
 

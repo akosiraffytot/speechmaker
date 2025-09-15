@@ -1,3 +1,6 @@
+// Import StateManager
+import StateManager from './components/StateManager.js';
+
 // DOM Elements
 const textInput = document.getElementById('textInput');
 const selectFileBtn = document.getElementById('selectFileBtn');
@@ -234,13 +237,19 @@ const progressManager = new ProgressManager();
 // Initialize error display
 let errorDisplay;
 
+// Initialize state manager
+let stateManager;
+
 // Initialize Application with optimized loading
 document.addEventListener('DOMContentLoaded', async () => {
-    // Show loading state immediately
-    showLoadingState();
+    // Initialize state manager first
+    stateManager = new StateManager();
     
     // Initialize error display
     errorDisplay = new ErrorDisplay();
+    
+    // Setup state manager event listeners
+    setupStateManagerListeners();
     
     // Load components asynchronously for better performance
     try {
@@ -250,59 +259,381 @@ document.addEventListener('DOMContentLoaded', async () => {
         // Setup event listeners early
         setupEventListeners();
         
-        // Load voices in background (potentially slow)
-        loadVoicesAsync();
-        
-        // Listen for service initialization
+        // Listen for service initialization (main process handles voice loading and FFmpeg detection)
         setupServiceListeners();
+        
+        // Initialize output folder management
+        initializeOutputFolderManagement();
+        
+        console.log('Renderer initialization complete, waiting for main process...');
         
     } catch (error) {
         console.error('Failed to initialize application:', error);
-        hideLoadingState();
-        statusText.textContent = 'Failed to initialize application';
+        if (stateManager) {
+            stateManager.updateInitializationState(false);
+        }
+        if (statusText) {
+            statusText.textContent = 'Failed to initialize application';
+        }
     }
 });
 
-// Show initial loading state
-function showLoadingState() {
-    statusText.textContent = 'Initializing application...';
-    convertBtn.disabled = true;
-    voiceSelect.disabled = true;
+// Setup state manager event listeners
+function setupStateManagerListeners() {
+    // Listen for state changes
+    stateManager.addEventListener('stateChange', (event, currentState, previousState) => {
+        console.log(`State changed: ${event}`, currentState);
+    });
     
-    // Add loading spinner to convert button
-    convertBtn.innerHTML = '<span class="loading-spinner"></span> Loading...';
+    // Listen for user actions
+    stateManager.addEventListener('action', (action, data) => {
+        if (action === 'retryVoiceLoading') {
+            retryVoiceLoading();
+        }
+    });
+    
+    // Listen for format availability changes
+    stateManager.addEventListener('formatAvailability', (eventData) => {
+        console.log('Format availability changed:', eventData);
+        
+        // Update UI elements based on format availability
+        updateFormatDependentUI(eventData.mp3Available);
+        
+        // Update settings if needed
+        if (!eventData.mp3Available && currentSettings.defaultOutputFormat === 'mp3') {
+            currentSettings.defaultOutputFormat = 'wav';
+            saveSettings().catch(error => {
+                console.error('Failed to save format change:', error);
+            });
+        }
+    });
+    
+    // Listen for automatic format changes
+    stateManager.addEventListener('automaticFormatChange', (eventData) => {
+        console.log('Automatic format change:', eventData);
+        
+        // Update current settings to reflect the change
+        currentSettings.defaultOutputFormat = eventData.newFormat;
+        saveSettings().catch(error => {
+            console.error('Failed to save automatic format change:', error);
+        });
+        
+        // Show user feedback about the change
+        showFormatChangeUserFeedback(eventData);
+    });
 }
 
-// Hide loading state
+// Update UI elements that depend on format availability
+function updateFormatDependentUI(mp3Available) {
+    // Update convert button tooltip
+    const convertBtn = document.getElementById('convertBtn');
+    if (convertBtn) {
+        if (mp3Available) {
+            convertBtn.title = 'Convert text to speech (WAV and MP3 formats available)';
+        } else {
+            convertBtn.title = 'Convert text to speech (WAV format only - MP3 requires FFmpeg)';
+        }
+    }
+    
+    // Update settings modal format options
+    updateSettingsModalFormatOptions(mp3Available);
+}
+
+// Update format options in settings modal
+function updateSettingsModalFormatOptions(mp3Available) {
+    const defaultFormatMp3 = document.getElementById('defaultFormatMp3');
+    const defaultFormatMp3Label = document.querySelector('label[for="defaultFormatMp3"]');
+    
+    if (defaultFormatMp3 && defaultFormatMp3Label) {
+        defaultFormatMp3.disabled = !mp3Available;
+        
+        if (mp3Available) {
+            defaultFormatMp3Label.classList.remove('disabled');
+            defaultFormatMp3Label.title = 'MP3 format available';
+        } else {
+            defaultFormatMp3Label.classList.add('disabled');
+            defaultFormatMp3Label.title = 'MP3 format requires FFmpeg';
+            
+            // Auto-select WAV if MP3 was selected
+            if (defaultFormatMp3.checked) {
+                defaultFormatMp3.checked = false;
+                const defaultFormatWav = document.getElementById('defaultFormatWav');
+                if (defaultFormatWav) {
+                    defaultFormatWav.checked = true;
+                }
+            }
+        }
+    }
+}
+
+// Show user feedback about format changes
+function showFormatChangeUserFeedback(eventData) {
+    // This could be enhanced with more detailed user feedback
+    console.log(`Format automatically changed to ${eventData.newFormat.toUpperCase()} due to ${eventData.reason}`);
+}
+
+// Show initial loading state (deprecated - now handled by StateManager)
+function showLoadingState() {
+    // Legacy function - StateManager handles this now
+    if (stateManager) {
+        stateManager.updateInitializationState(true);
+    } else {
+        statusText.textContent = 'Initializing application...';
+        convertBtn.disabled = true;
+        voiceSelect.disabled = true;
+        convertBtn.innerHTML = '<span class="loading-spinner"></span> Loading...';
+    }
+}
+
+// Hide loading state (deprecated - now handled by StateManager)
 function hideLoadingState() {
-    convertBtn.disabled = false;
-    voiceSelect.disabled = false;
-    convertBtn.innerHTML = 'Convert to Speech';
+    // Legacy function - StateManager handles this now
+    if (stateManager) {
+        stateManager.updateInitializationState(false);
+    } else {
+        convertBtn.disabled = false;
+        voiceSelect.disabled = false;
+        convertBtn.innerHTML = 'Convert to Speech';
+    }
 }
 
 // Load voices asynchronously without blocking UI
+// Note: This function is now primarily used for manual retries
+// Initial voice loading is handled by the main process during startup
 async function loadVoicesAsync() {
+    let attempt = 0;
+    const maxRetries = 3;
+    
+    while (attempt < maxRetries) {
+        attempt++;
+        
+        try {
+            // Update state manager with loading state
+            if (stateManager) {
+                stateManager.updateVoiceState(true, false, [], attempt);
+            }
+            
+            // Use setTimeout to yield control to UI thread
+            await new Promise(resolve => setTimeout(resolve, 10));
+            
+            const voices = await loadVoices();
+            
+            // Update state manager with success
+            if (stateManager) {
+                stateManager.updateVoiceState(false, true, voices || [], attempt);
+            }
+            
+            hideLoadingState();
+            return; // Success, exit retry loop
+            
+        } catch (error) {
+            console.error(`Failed to load voices (attempt ${attempt}):`, error);
+            
+            if (attempt >= maxRetries) {
+                // Final failure
+                if (stateManager) {
+                    stateManager.updateVoiceState(false, false, [], attempt, error);
+                } else {
+                    statusText.textContent = 'Error loading voices - some features may not work';
+                }
+                hideLoadingState();
+            } else {
+                // Wait before retry (exponential backoff)
+                const delay = Math.pow(2, attempt) * 1000;
+                await new Promise(resolve => setTimeout(resolve, delay));
+            }
+        }
+    }
+}
+
+// Manual retry function for voice loading
+async function retryVoiceLoading() {
     try {
-        statusText.textContent = 'Loading voices...';
+        console.log('Manually retrying voice loading...');
         
-        // Use setTimeout to yield control to UI thread
-        await new Promise(resolve => setTimeout(resolve, 10));
+        if (stateManager) {
+            stateManager.updateVoiceState(true, false, [], 1);
+        }
         
-        await loadVoices();
-        hideLoadingState();
+        // Use the TTS service retry mechanism from main process
+        const result = await window.electronAPI.retryVoiceLoading();
+        
+        if (result && result.success) {
+            if (stateManager) {
+                stateManager.updateVoiceState(false, true, result.voices || [], result.attempts || 1);
+            }
+        } else {
+            if (stateManager) {
+                stateManager.updateVoiceState(false, false, [], result?.attempts || 1, new Error(result?.error || 'Retry failed'));
+            }
+        }
+        
     } catch (error) {
-        console.error('Failed to load voices:', error);
-        statusText.textContent = 'Error loading voices - some features may not work';
-        hideLoadingState();
+        console.error('Manual voice loading retry failed:', error);
+        
+        if (stateManager) {
+            stateManager.updateVoiceState(false, false, [], 1, error);
+        }
+        
+        progressManager.showErrorNotification('Voice loading retry failed: ' + error.message);
     }
 }
 
 // Setup listeners for service initialization events
 function setupServiceListeners() {
+    // Listen for initialization updates (real-time progress)
+    window.electronAPI.onInitializationUpdate && window.electronAPI.onInitializationUpdate((_, data) => {
+        console.log('Initialization update:', data);
+        
+        if (stateManager) {
+            // Handle different types of initialization updates
+            switch (data.type) {
+                case 'started':
+                    stateManager.updateInitializationState(true);
+                    break;
+                case 'ffmpeg-complete':
+                    stateManager.updateFFmpegState(
+                        data.data.status.available || false,
+                        data.data.status.source || 'none',
+                        data.data.status.validated || false
+                    );
+                    break;
+                case 'voices-complete':
+                    stateManager.updateVoiceState(
+                        false, // not loading anymore
+                        data.data.success || false,
+                        data.data.voices || [],
+                        data.data.attempts || 1,
+                        null // no error
+                    );
+                    break;
+                case 'ffmpeg-error':
+                    stateManager.updateFFmpegState(false, 'none', false);
+                    break;
+                case 'voices-error':
+                    stateManager.updateVoiceState(
+                        false, // not loading anymore
+                        false, // failed
+                        [],
+                        data.data.attempts || 1,
+                        new Error(data.data.error || 'Voice loading failed')
+                    );
+                    break;
+                case 'finalizing':
+                    // Show finalizing message
+                    if (statusText) {
+                        statusText.textContent = data.data.message || 'Finalizing initialization...';
+                    }
+                    break;
+                case 'complete':
+                    stateManager.updateInitializationState(false);
+                    break;
+            }
+        }
+    });
+
+    // Listen for initialization completion
+    window.electronAPI.onInitializationComplete && window.electronAPI.onInitializationComplete((_, data) => {
+        console.log('Initialization complete:', data);
+        
+        if (stateManager) {
+            // Update FFmpeg state
+            if (data.ffmpeg) {
+                stateManager.updateFFmpegState(
+                    data.ffmpeg.available || false,
+                    data.ffmpeg.source || 'none',
+                    data.ffmpeg.validated || false
+                );
+            }
+            
+            // Update voice state
+            if (data.voices) {
+                stateManager.updateVoiceState(
+                    false, // not loading anymore
+                    data.voices.success || false,
+                    data.voices.voices || [],
+                    data.voices.attempts || 1,
+                    data.voices.error ? new Error(data.voices.error) : null
+                );
+            }
+            
+            // Update overall initialization state
+            stateManager.updateInitializationState(false);
+            
+            // Show performance metrics if available
+            if (data.performanceMetrics && process.env.NODE_ENV === 'development') {
+                console.log('Startup Performance:', data.performanceMetrics);
+            }
+        } else {
+            hideLoadingState();
+        }
+    });
+    
+    // Listen for initialization errors
+    window.electronAPI.onInitializationError && window.electronAPI.onInitializationError((_, error) => {
+        console.error('Initialization error:', error);
+        
+        if (stateManager) {
+            stateManager.updateInitializationState(false);
+        } else {
+            hideLoadingState();
+        }
+        
+        progressManager.showErrorNotification(`Initialization failed: ${error.message || error}`);
+    });
+    
+    // Listen for FFmpeg status updates (real-time updates during initialization)
+    window.electronAPI.onFFmpegStatusUpdate && window.electronAPI.onFFmpegStatusUpdate((_, status) => {
+        console.log('FFmpeg status update:', status);
+        
+        if (stateManager) {
+            stateManager.updateFFmpegState(
+                status.available || false,
+                status.source || 'none',
+                status.validated || false
+            );
+        }
+    });
+    
+    // Listen for voice loading updates (real-time updates during initialization)
+    window.electronAPI.onVoicesLoaded && window.electronAPI.onVoicesLoaded((_, data) => {
+        console.log('Voices loaded:', data);
+        
+        if (stateManager) {
+            stateManager.updateVoiceState(
+                false, // not loading anymore
+                true, // successfully loaded
+                data.voices || [],
+                data.attempts || 1,
+                null // no error
+            );
+        }
+    });
+    
+    // Listen for voice loading failures (real-time updates during initialization)
+    window.electronAPI.onVoicesLoadFailed && window.electronAPI.onVoicesLoadFailed((_, data) => {
+        console.warn('Voice loading failed:', data);
+        
+        if (stateManager) {
+            stateManager.updateVoiceState(
+                false, // not loading anymore
+                false, // failed to load
+                [],
+                data.attempts || 1,
+                new Error(data.error || 'Voice loading failed')
+            );
+        }
+    });
+    
+    // Legacy listeners for backward compatibility
     // Listen for service ready event
     window.electronAPI.onServiceReady && window.electronAPI.onServiceReady(() => {
-        console.log('Services are ready');
-        hideLoadingState();
+        console.log('Services are ready (legacy event)');
+        if (stateManager) {
+            stateManager.updateInitializationState(false);
+        } else {
+            hideLoadingState();
+        }
     });
     
     // Listen for service errors
@@ -328,6 +659,11 @@ async function loadSettings() {
             // Apply settings to UI
             if (currentSettings.defaultOutputPath) {
                 outputFolder.value = currentSettings.defaultOutputPath;
+                outputFolder.title = currentSettings.defaultOutputPath; // Show full path in tooltip
+            } else {
+                // Clear the output folder if no default is set
+                outputFolder.value = '';
+                outputFolder.placeholder = 'Select output folder or use default...';
             }
             
             // Set output format
@@ -343,64 +679,65 @@ async function loadSettings() {
 
 // Load available TTS voices with optimized performance
 async function loadVoices() {
+    const voices = await window.electronAPI.getAvailableVoices();
+    
+    if (!voices || voices.length === 0) {
+        throw new Error('No TTS voices found');
+    }
+    
+    // StateManager will handle UI updates, but we still need to populate the select
+    // for backward compatibility with existing code
+    voiceSelect.innerHTML = '';
+    
+    // Use document fragment for better performance
+    const fragment = document.createDocumentFragment();
+    
+    voices.forEach(voice => {
+        const option = document.createElement('option');
+        option.value = voice.id;
+        option.textContent = `${voice.name} (${voice.language})`;
+        fragment.appendChild(option);
+    });
+    
+    voiceSelect.appendChild(fragment);
+    
+    // Select previously used voice or first available
+    if (currentSettings.lastSelectedVoice) {
+        voiceSelect.value = currentSettings.lastSelectedVoice;
+    }
+    
+    return voices;
+}
+
+// FFmpeg detection is now handled by the main process during startup
+// This function is kept for backward compatibility but is no longer used
+async function initializeFFmpegDetection() {
+    console.log('FFmpeg detection is now handled by main process during startup');
+    // No longer needed - main process handles FFmpeg detection during parallel initialization
+}
+
+// Initialize output folder management
+async function initializeOutputFolderManagement() {
     try {
-        statusText.textContent = 'Loading voices...';
+        // Get default output folder from main process
+        const defaultFolder = await window.electronAPI.getDefaultOutputFolder();
         
-        // Use requestIdleCallback for better performance if available
-        const loadVoicesWork = async () => {
-            const voices = await window.electronAPI.getAvailableVoices();
-            
-            // Clear existing options
-            voiceSelect.innerHTML = '';
-            
-            if (voices && voices.length > 0) {
-                // Use document fragment for better performance
-                const fragment = document.createDocumentFragment();
-                
-                voices.forEach(voice => {
-                    const option = document.createElement('option');
-                    option.value = voice.id;
-                    option.textContent = `${voice.name} (${voice.language})`;
-                    fragment.appendChild(option);
-                });
-                
-                voiceSelect.appendChild(fragment);
-                
-                // Select previously used voice or first available
-                if (currentSettings.lastSelectedVoice) {
-                    voiceSelect.value = currentSettings.lastSelectedVoice;
-                }
-                
-                statusText.textContent = 'Ready';
-                voiceSelect.disabled = false;
-            } else {
-                const option = document.createElement('option');
-                option.textContent = 'No voices available';
-                voiceSelect.appendChild(option);
-                statusText.textContent = 'No TTS voices found';
-                voiceSelect.disabled = true;
-            }
-        };
+        // Check if user has already set an output folder
+        const hasUserFolder = outputFolder.value && outputFolder.value.trim() !== '';
         
-        // Use requestIdleCallback if available, otherwise use setTimeout
-        if (window.requestIdleCallback) {
-            window.requestIdleCallback(loadVoicesWork, { timeout: 2000 });
-        } else {
-            setTimeout(loadVoicesWork, 10);
+        if (stateManager) {
+            stateManager.updateOutputFolderState(hasUserFolder, defaultFolder);
+        }
+        
+        // Set placeholder if no user folder is set
+        if (!hasUserFolder && defaultFolder) {
+            outputFolder.placeholder = `Default: ${defaultFolder}`;
         }
         
     } catch (error) {
-        console.error('Failed to load voices:', error);
-        statusText.textContent = 'Error loading voices';
-        
-        const option = document.createElement('option');
-        option.textContent = 'Error loading voices';
-        voiceSelect.appendChild(option);
-        voiceSelect.disabled = true;
-        
-        // Show enhanced error for TTS voice issues
-        if (errorDisplay) {
-            errorDisplay.handleTTSVoiceError(error, () => loadVoices());
+        console.error('Failed to initialize output folder management:', error);
+        if (stateManager) {
+            stateManager.updateOutputFolderState(false, null);
         }
     }
 }
@@ -431,6 +768,11 @@ function setupEventListeners() {
             const result = await window.electronAPI.selectOutputFolder();
             if (result && result.folderPath) {
                 outputFolder.value = result.folderPath;
+                
+                // Update state manager
+                if (stateManager) {
+                    stateManager.updateOutputFolderState(true, stateManager.getState().defaultOutputFolder);
+                }
             }
         } catch (error) {
             console.error('Folder selection error:', error);
@@ -466,10 +808,40 @@ function setupEventListeners() {
         await saveSettings();
     });
     
-    // Output format change
+    // Enhanced output format change with intelligent management
     document.querySelectorAll('input[name="outputFormat"]').forEach(radio => {
-        radio.addEventListener('change', async () => {
-            currentSettings.defaultOutputFormat = radio.value;
+        radio.addEventListener('change', async (event) => {
+            const selectedFormat = radio.value;
+            
+            // Validate format selection with StateManager
+            if (stateManager) {
+                const validation = stateManager.validateFormatSelection(selectedFormat);
+                
+                if (!validation.valid) {
+                    // Prevent invalid selection
+                    event.preventDefault();
+                    
+                    // Show error notification
+                    stateManager.showFormatStatusNotification(
+                        `Cannot select ${selectedFormat.toUpperCase()} format`,
+                        'warning',
+                        validation.reason
+                    );
+                    
+                    // Auto-select suggested format
+                    if (validation.suggestedFormat) {
+                        stateManager.setSelectedFormat(validation.suggestedFormat);
+                        currentSettings.defaultOutputFormat = validation.suggestedFormat;
+                    }
+                } else {
+                    // Valid selection
+                    currentSettings.defaultOutputFormat = selectedFormat;
+                }
+            } else {
+                // Fallback for when StateManager is not available
+                currentSettings.defaultOutputFormat = selectedFormat;
+            }
+            
             await saveSettings();
         });
     });
@@ -513,10 +885,15 @@ async function startConversion() {
     const outputFormat = document.querySelector('input[name="outputFormat"]:checked').value;
     const outputPath = outputFolder.value;
     
-    // Validation
+    // Validation using StateManager
     if (!text) {
         progressManager.showErrorNotification('Please enter text to convert.');
         textInput.focus();
+        return;
+    }
+    
+    if (!stateManager.hasVoices()) {
+        progressManager.showErrorNotification('No voices available. Please wait for voices to load or try refreshing.');
         return;
     }
     
@@ -526,9 +903,15 @@ async function startConversion() {
         return;
     }
     
-    if (!outputPath) {
+    if (!outputPath && !stateManager.getState().defaultOutputFolder) {
         progressManager.showErrorNotification('Please select an output folder.');
         selectFolderBtn.focus();
+        return;
+    }
+    
+    // Check MP3 format availability
+    if (outputFormat === 'mp3' && !stateManager.canConvertToMp3()) {
+        progressManager.showErrorNotification('MP3 format is not available. FFmpeg is required for MP3 conversion.');
         return;
     }
     
@@ -724,8 +1107,17 @@ class SettingsModal {
             this.defaultFormatMp3.checked = true;
         }
         
-        // Default output path
-        this.defaultOutputPath.value = this.tempSettings.defaultOutputPath || '';
+        // Default output path - show current path or indicate if none set
+        const outputPath = this.tempSettings.defaultOutputPath || '';
+        this.defaultOutputPath.value = outputPath;
+        this.defaultOutputPath.title = outputPath; // Show full path in tooltip
+        
+        // Update placeholder text based on whether path is set
+        if (outputPath) {
+            this.defaultOutputPath.placeholder = 'Default output directory is set';
+        } else {
+            this.defaultOutputPath.placeholder = 'No default directory set - will use system default';
+        }
         
         // Max chunk length
         this.maxChunkLength.value = this.tempSettings.maxChunkLength || 5000;
@@ -775,7 +1167,9 @@ class SettingsModal {
     
     clearDefaultPath() {
         this.defaultOutputPath.value = '';
-        this.tempSettings.defaultOutputPath = '';
+        this.defaultOutputPath.placeholder = 'No default directory set - will use system default';
+        this.defaultOutputPath.title = '';
+        this.tempSettings.defaultOutputPath = null;
     }
     
     async saveSettings() {
@@ -817,8 +1211,14 @@ class SettingsModal {
         }
         
         // Update output folder in main UI
-        if (currentSettings.defaultOutputPath && !outputFolder.value) {
+        if (currentSettings.defaultOutputPath) {
+            // Always update to show the current default path
             outputFolder.value = currentSettings.defaultOutputPath;
+            outputFolder.title = currentSettings.defaultOutputPath; // Show full path in tooltip
+        } else {
+            // Clear if no default path is set
+            outputFolder.value = '';
+            outputFolder.title = '';
         }
     }
     

@@ -28,12 +28,30 @@ const mockFfmpegInstance = {
 
 const mockFfmpeg = vi.fn(() => mockFfmpegInstance);
 mockFfmpeg.ffprobe = vi.fn();
+mockFfmpeg.setFfmpegPath = vi.fn();
+
+const mockExecAsync = vi.fn();
+const mockChildProcess = {
+    spawn: mockSpawn,
+    exec: vi.fn()
+};
+
+// Mock util.promisify
+const mockPromisify = vi.fn((fn) => mockExecAsync);
+
+// Mock ErrorHandler to avoid Electron dependency issues
+const mockErrorHandler = {
+    handleFileError: vi.fn((error, filePath, context) => error),
+    handleFFmpegError: vi.fn((error, context) => error)
+};
 
 beforeAll(() => {
     vi.doMock('fs/promises', () => mockFs);
     vi.doMock('path', () => mockPath);
-    vi.doMock('child_process', () => ({ spawn: mockSpawn }));
+    vi.doMock('child_process', () => mockChildProcess);
     vi.doMock('fluent-ffmpeg', () => ({ default: mockFfmpeg }));
+    vi.doMock('util', () => ({ promisify: mockPromisify }));
+    vi.doMock('../src/main/services/errorHandler.js', () => ({ default: function() { return mockErrorHandler; } }));
 });
 
 describe('AudioProcessor', () => {
@@ -66,97 +84,284 @@ describe('AudioProcessor', () => {
         it('should initialize with correct default values', () => {
             expect(audioProcessor.ffmpegPath).toBe(null);
             expect(audioProcessor.isFFmpegValidated).toBe(false);
+            expect(audioProcessor.ffmpegStatus).toEqual({
+                available: false,
+                source: 'none',
+                path: null,
+                version: null,
+                validated: false,
+                error: null
+            });
+        });
+    });
+
+    describe('getBundledFFmpegPath', () => {
+        beforeEach(() => {
+            // Reset path mock
+            mockPath.join = vi.fn((...args) => args.join('/'));
+        });
+
+        it('should return correct path for development environment', () => {
+            const originalEnv = process.env.NODE_ENV;
+            process.env.NODE_ENV = 'development';
+            
+            const result = audioProcessor.getBundledFFmpegPath();
+            
+            expect(result).toContain('resources');
+            expect(result).toContain('ffmpeg');
+            expect(result).toContain(process.platform);
+            expect(result).toContain(process.arch);
+            expect(result).toContain('ffmpeg.exe');
+            
+            process.env.NODE_ENV = originalEnv;
+        });
+
+        it('should return correct path for production environment', () => {
+            const originalEnv = process.env.NODE_ENV;
+            const originalResourcesPath = process.resourcesPath;
+            
+            process.env.NODE_ENV = 'production';
+            process.resourcesPath = '/app/resources';
+            
+            const result = audioProcessor.getBundledFFmpegPath();
+            
+            expect(result).toContain('resources');
+            expect(result).toContain('ffmpeg');
+            expect(result).toContain(process.platform);
+            expect(result).toContain(process.arch);
+            
+            process.env.NODE_ENV = originalEnv;
+            process.resourcesPath = originalResourcesPath;
+        });
+    });
+
+    describe('validateFFmpeg', () => {
+        it('should return invalid result for null path', async () => {
+            const result = await audioProcessor.validateFFmpeg(null);
+            
+            expect(result).toEqual({
+                valid: false,
+                version: null,
+                error: 'No FFmpeg path provided'
+            });
+        });
+
+        it('should return invalid result when file does not exist', async () => {
+            mockFs.access.mockRejectedValueOnce(new Error('File not found'));
+            
+            const result = await audioProcessor.validateFFmpeg('/nonexistent/ffmpeg.exe');
+            
+            expect(result.valid).toBe(false);
+            expect(result.error).toContain('FFmpeg validation failed');
+        });
+
+        it('should return valid result for working FFmpeg', async () => {
+            mockFs.access.mockResolvedValueOnce();
+            mockExecAsync.mockResolvedValueOnce({
+                stdout: 'ffmpeg version 4.4.0-0ubuntu1 Copyright (c) 2000-2021',
+                stderr: ''
+            });
+            
+            const result = await audioProcessor.validateFFmpeg('/path/to/ffmpeg.exe');
+            
+            expect(result.valid).toBe(true);
+            expect(result.version).toBe('4.4.0-0ubuntu1');
+            expect(result.error).toBe(null);
+        });
+
+        it('should return invalid result when version check fails', async () => {
+            mockFs.access.mockResolvedValueOnce();
+            mockExecAsync.mockResolvedValueOnce({
+                stdout: 'invalid output',
+                stderr: ''
+            });
+            
+            const result = await audioProcessor.validateFFmpeg('/path/to/ffmpeg.exe');
+            
+            expect(result.valid).toBe(false);
+            expect(result.error).toBe('FFmpeg version check failed');
+        });
+
+        it('should handle execution errors', async () => {
+            mockFs.access.mockResolvedValueOnce();
+            mockExecAsync.mockRejectedValueOnce(new Error('Command failed'));
+            
+            const result = await audioProcessor.validateFFmpeg('/path/to/ffmpeg.exe');
+            
+            expect(result.valid).toBe(false);
+            expect(result.error).toContain('FFmpeg validation failed: Command failed');
+        });
+    });
+
+    describe('detectSystemFFmpeg', () => {
+        it('should return path when FFmpeg found with where command', async () => {
+            mockExecAsync.mockResolvedValueOnce({
+                stdout: 'C:\\ffmpeg\\bin\\ffmpeg.exe\n',
+                stderr: ''
+            });
+            
+            const result = await audioProcessor.detectSystemFFmpeg();
+            
+            expect(result).toBe('C:\\ffmpeg\\bin\\ffmpeg.exe');
+        });
+
+        it('should return ffmpeg when available in PATH', async () => {
+            mockExecAsync
+                .mockRejectedValueOnce(new Error('where command failed'))
+                .mockResolvedValueOnce({
+                    stdout: 'ffmpeg version 4.4.0',
+                    stderr: ''
+                });
+            
+            const result = await audioProcessor.detectSystemFFmpeg();
+            
+            expect(result).toBe('ffmpeg');
+        });
+
+        it('should return null when FFmpeg not found', async () => {
+            mockExecAsync
+                .mockRejectedValueOnce(new Error('where command failed'))
+                .mockRejectedValueOnce(new Error('ffmpeg command failed'));
+            
+            const result = await audioProcessor.detectSystemFFmpeg();
+            
+            expect(result).toBe(null);
+        });
+    });
+
+    describe('initializeFFmpeg', () => {
+        beforeEach(() => {
+            vi.spyOn(audioProcessor, 'getBundledFFmpegPath').mockReturnValue('/bundled/ffmpeg.exe');
+            vi.spyOn(audioProcessor, 'detectSystemFFmpeg');
+            vi.spyOn(audioProcessor, 'validateFFmpeg');
+        });
+
+        it('should use bundled FFmpeg when available', async () => {
+            audioProcessor.validateFFmpeg.mockResolvedValueOnce({
+                valid: true,
+                version: '4.4.0',
+                error: null
+            });
+            
+            const result = await audioProcessor.initializeFFmpeg();
+            
+            expect(result.available).toBe(true);
+            expect(result.source).toBe('bundled');
+            expect(result.path).toBe('/bundled/ffmpeg.exe');
+            expect(result.version).toBe('4.4.0');
+            expect(mockFfmpeg.setFfmpegPath).toHaveBeenCalledWith('/bundled/ffmpeg.exe');
+        });
+
+        it('should fallback to system FFmpeg when bundled fails', async () => {
+            audioProcessor.validateFFmpeg
+                .mockResolvedValueOnce({ valid: false, version: null, error: 'Bundled failed' })
+                .mockResolvedValueOnce({ valid: true, version: '4.3.0', error: null });
+            
+            audioProcessor.detectSystemFFmpeg.mockResolvedValueOnce('/system/ffmpeg.exe');
+            
+            const result = await audioProcessor.initializeFFmpeg();
+            
+            expect(result.available).toBe(true);
+            expect(result.source).toBe('system');
+            expect(result.path).toBe('/system/ffmpeg.exe');
+            expect(result.version).toBe('4.3.0');
+        });
+
+        it('should return unavailable when no FFmpeg found', async () => {
+            audioProcessor.validateFFmpeg
+                .mockResolvedValueOnce({ valid: false, version: null, error: 'Bundled failed' })
+                .mockResolvedValueOnce({ valid: false, version: null, error: 'System failed' });
+            
+            audioProcessor.detectSystemFFmpeg.mockResolvedValueOnce('/system/ffmpeg.exe');
+            
+            const result = await audioProcessor.initializeFFmpeg();
+            
+            expect(result.available).toBe(false);
+            expect(result.source).toBe('none');
+            expect(result.error).toBe('No working FFmpeg installation found');
+        });
+
+        it('should handle initialization errors', async () => {
+            audioProcessor.getBundledFFmpegPath.mockImplementation(() => {
+                throw new Error('Path error');
+            });
+            
+            const result = await audioProcessor.initializeFFmpeg();
+            
+            expect(result.available).toBe(false);
+            expect(result.error).toContain('FFmpeg initialization failed: Path error');
+        });
+    });
+
+    describe('getFFmpegStatus', () => {
+        it('should return copy of current status', () => {
+            audioProcessor.ffmpegStatus = {
+                available: true,
+                source: 'bundled',
+                path: '/test/ffmpeg.exe',
+                version: '4.4.0',
+                validated: true,
+                error: null
+            };
+            
+            const result = audioProcessor.getFFmpegStatus();
+            
+            expect(result).toEqual(audioProcessor.ffmpegStatus);
+            expect(result).not.toBe(audioProcessor.ffmpegStatus); // Should be a copy
         });
     });
 
     describe('validateFFmpegInstallation', () => {
-        let mockProcess;
-
         beforeEach(() => {
-            mockProcess = {
-                on: vi.fn(),
-                kill: vi.fn()
-            };
-            mockSpawn.mockReturnValue(mockProcess);
+            vi.spyOn(audioProcessor, 'initializeFFmpeg');
         });
 
         it('should return true when FFmpeg is available', async () => {
-            // Setup process to emit close with code 0
-            mockProcess.on.mockImplementation((event, callback) => {
-                if (event === 'close') {
-                    // Use setImmediate for proper async handling
-                    setImmediate(() => callback(0));
-                }
-                return mockProcess;
+            audioProcessor.initializeFFmpeg.mockResolvedValueOnce({
+                available: true,
+                source: 'bundled'
             });
 
             const result = await audioProcessor.validateFFmpegInstallation();
             
             expect(result).toBe(true);
-            expect(audioProcessor.isFFmpegValidated).toBe(true);
-            expect(mockSpawn).toHaveBeenCalledWith('ffmpeg', ['-version'], { 
-                stdio: 'pipe',
-                shell: true 
-            });
+            expect(audioProcessor.initializeFFmpeg).toHaveBeenCalled();
         });
 
         it('should return false when FFmpeg is not available', async () => {
-            // Setup process to emit close with non-zero code
-            mockProcess.on.mockImplementation((event, callback) => {
-                if (event === 'close') {
-                    setImmediate(() => callback(1));
-                }
-                return mockProcess;
+            audioProcessor.initializeFFmpeg.mockResolvedValueOnce({
+                available: false,
+                source: 'none'
             });
 
             const result = await audioProcessor.validateFFmpegInstallation();
             
             expect(result).toBe(false);
-            expect(audioProcessor.isFFmpegValidated).toBe(false);
         });
 
-        it('should return false when process errors', async () => {
-            // Setup process to emit error
-            mockProcess.on.mockImplementation((event, callback) => {
-                if (event === 'error') {
-                    setImmediate(() => callback(new Error('Command not found')));
-                }
-                return mockProcess;
-            });
-
-            const result = await audioProcessor.validateFFmpegInstallation();
-            
-            expect(result).toBe(false);
-            expect(audioProcessor.isFFmpegValidated).toBe(false);
-        });
-
-        it('should return cached result on subsequent calls', async () => {
+        it('should return cached result when already validated', async () => {
             audioProcessor.isFFmpegValidated = true;
+            audioProcessor.ffmpegStatus.available = true;
             
             const result = await audioProcessor.validateFFmpegInstallation();
             
             expect(result).toBe(true);
-            expect(mockSpawn).not.toHaveBeenCalled();
+            expect(audioProcessor.initializeFFmpeg).not.toHaveBeenCalled();
         });
 
-        it('should handle timeout', async () => {
-            // Don't emit any events to simulate timeout
-            mockProcess.on.mockReturnValue(mockProcess);
+        it('should re-initialize when not validated', async () => {
+            audioProcessor.isFFmpegValidated = false;
+            audioProcessor.ffmpegStatus.available = false;
             
-            // Use fake timers to control timeout
-            vi.useFakeTimers();
+            audioProcessor.initializeFFmpeg.mockResolvedValueOnce({
+                available: true,
+                source: 'system'
+            });
+
+            const result = await audioProcessor.validateFFmpegInstallation();
             
-            const promise = audioProcessor.validateFFmpegInstallation();
-            
-            // Fast-forward time to trigger timeout
-            vi.advanceTimersByTime(6000);
-            
-            const result = await promise;
-            
-            expect(result).toBe(false);
-            expect(mockProcess.kill).toHaveBeenCalled();
-            
-            vi.useRealTimers();
+            expect(result).toBe(true);
+            expect(audioProcessor.initializeFFmpeg).toHaveBeenCalled();
         });
     });
 

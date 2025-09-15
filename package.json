@@ -3,7 +3,6 @@
   "version": "1.0.0",
   "description": "A Windows desktop application that converts text to speech using built-in Windows TTS voices",
   "main": "src/main/main.js",
-
   "author": "SpeechMaker Team",
   "license": "MIT",
   "homepage": "./",
@@ -18,8 +17,12 @@
     "pack:win": "electron-builder --dir --win",
     "postinstall": "electron-builder install-app-deps",
     "validate": "node scripts/validate-build.js",
-    "prebuild": "npm run validate",
-    "predist": "npm run validate",
+    "validate-packaging": "node scripts/validate-packaging.js",
+    "validate-built-app": "node scripts/validate-built-app.js",
+    "verify-ffmpeg": "node scripts/verify-ffmpeg-bundle.js",
+    "prebuild": "npm run validate && npm run verify-ffmpeg",
+    "postbuild": "npm run validate-built-app",
+    "predist": "npm run validate && npm run validate-packaging",
     "clean": "rimraf dist build/Release build/Debug",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -28,6 +31,7 @@
   "devDependencies": {
     "electron": "^27.0.0",
     "electron-builder": "^24.6.4",
+    "jsdom": "^27.0.0",
     "rimraf": "^5.0.0",
     "vitest": "^1.0.0"
   },
@@ -59,18 +63,31 @@
       {
         "from": "assets/",
         "to": "assets/",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "resources/ffmpeg/",
+        "to": "resources/ffmpeg/",
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "win": {
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         },
         {
           "target": "portable",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "icon": "assets/icon.ico",

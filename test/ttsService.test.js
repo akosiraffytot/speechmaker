@@ -192,7 +192,8 @@ Name: Microsoft Zira Desktop, Gender: Female, Language: en-US`;
       expect(status).toEqual({
         isInitialized: true,
         voiceCount: 2,
-        maxChunkLength: 4000
+        maxChunkLength: 4000,
+        voiceLoadingState: expect.any(Object)
       });
     });
 
@@ -204,8 +205,248 @@ Name: Microsoft Zira Desktop, Gender: Female, Language: en-US`;
       expect(status).toEqual({
         isInitialized: false,
         voiceCount: 0,
-        maxChunkLength: 5000
+        maxChunkLength: 5000,
+        voiceLoadingState: expect.any(Object)
       });
+    });
+  });
+
+  describe('Voice Loading Retry Mechanism', () => {
+    it('should initialize voice loading state correctly', () => {
+      const ttsService = new TTSService();
+      
+      expect(ttsService.voiceLoadingState).toEqual({
+        isLoading: false,
+        currentAttempt: 0,
+        maxAttempts: 3,
+        lastError: null,
+        retryDelay: 0
+      });
+    });
+
+    it('should return troubleshooting steps', () => {
+      const ttsService = new TTSService();
+      const steps = ttsService.getTroubleshootingSteps();
+      
+      expect(Array.isArray(steps)).toBe(true);
+      expect(steps.length).toBeGreaterThan(0);
+      expect(steps).toContain('Ensure Windows Speech Platform is installed and enabled');
+      expect(steps).toContain('Check Windows TTS settings in Control Panel > Speech');
+      expect(steps).toContain('Verify that edge-tts is properly installed (npm install -g edge-tts)');
+    });
+
+    it('should get voice loading state with troubleshooting steps', () => {
+      const ttsService = new TTSService();
+      const state = ttsService.getVoiceLoadingState();
+      
+      expect(state).toHaveProperty('isLoading', false);
+      expect(state).toHaveProperty('currentAttempt', 0);
+      expect(state).toHaveProperty('maxAttempts', 3);
+      expect(state).toHaveProperty('lastError', null);
+      expect(state).toHaveProperty('retryDelay', 0);
+      expect(state).toHaveProperty('troubleshootingSteps');
+      expect(Array.isArray(state.troubleshootingSteps)).toBe(true);
+    });
+
+    it('should handle successful voice loading on first attempt', async () => {
+      const ttsService = new TTSService();
+      
+      // Mock successful voice loading
+      const mockVoices = [
+        { id: 'voice1', name: 'Voice 1', gender: 'Male', language: 'en-US', isDefault: true }
+      ];
+      
+      ttsService.loadAvailableVoices = async () => mockVoices;
+      
+      const result = await ttsService.loadVoicesWithRetry(3);
+      
+      expect(result.success).toBe(true);
+      expect(result.voices).toEqual(mockVoices);
+      expect(result.attempt).toBe(1);
+      expect(result.totalAttempts).toBe(3);
+      expect(ttsService.voiceLoadingState.isLoading).toBe(false);
+      expect(ttsService.voiceLoadingState.lastError).toBe(null);
+    });
+
+    it('should handle voice loading failure after retries', async () => {
+      const ttsService = new TTSService();
+      
+      // Mock failing voice loading
+      const mockError = new Error('Failed to load voices');
+      ttsService.loadAvailableVoices = async () => {
+        throw mockError;
+      };
+      
+      // Mock sleep to avoid actual delays in tests
+      ttsService.sleep = async () => Promise.resolve();
+      
+      const result = await ttsService.loadVoicesWithRetry(2);
+      
+      expect(result.success).toBe(false);
+      expect(result.error).toBe(mockError);
+      expect(result.attempts).toBe(2);
+      expect(Array.isArray(result.troubleshooting)).toBe(true);
+      expect(ttsService.voiceLoadingState.isLoading).toBe(false);
+      expect(ttsService.voiceLoadingState.lastError).toBe(mockError);
+    });
+
+    it('should handle success after retries', async () => {
+      const ttsService = new TTSService();
+      let attemptCount = 0;
+      
+      const mockVoices = [
+        { id: 'voice1', name: 'Voice 1', gender: 'Male', language: 'en-US', isDefault: true }
+      ];
+      
+      // Mock voice loading that fails twice then succeeds
+      ttsService.loadAvailableVoices = async () => {
+        attemptCount++;
+        if (attemptCount < 3) {
+          throw new Error('Temporary failure');
+        }
+        return mockVoices;
+      };
+      
+      // Mock sleep to avoid actual delays in tests
+      ttsService.sleep = async () => Promise.resolve();
+      
+      const result = await ttsService.loadVoicesWithRetry(3);
+      
+      expect(result.success).toBe(true);
+      expect(result.voices).toEqual(mockVoices);
+      expect(result.attempt).toBe(3);
+      expect(attemptCount).toBe(3);
+    });
+
+    it('should emit correct events during retry process', async () => {
+      const ttsService = new TTSService();
+      const events = [];
+      
+      // Capture all events
+      ttsService.on('voiceLoadingStarted', (data) => events.push({ type: 'started', data }));
+      ttsService.on('voiceLoadingAttempt', (data) => events.push({ type: 'attempt', data }));
+      ttsService.on('voiceLoadRetry', (data) => events.push({ type: 'retry', data }));
+      ttsService.on('voiceLoadingFailed', (data) => events.push({ type: 'failed', data }));
+      
+      // Mock failing voice loading
+      ttsService.loadAvailableVoices = async () => {
+        throw new Error('Test error');
+      };
+      
+      // Mock sleep to avoid actual delays in tests
+      ttsService.sleep = async () => Promise.resolve();
+      
+      await ttsService.loadVoicesWithRetry(2);
+      
+      expect(events).toHaveLength(5); // started, attempt1, retry, attempt2, failed
+      expect(events[0].type).toBe('started');
+      expect(events[1].type).toBe('attempt');
+      expect(events[2].type).toBe('retry');
+      expect(events[3].type).toBe('attempt');
+      expect(events[4].type).toBe('failed');
+    });
+
+    it('should emit success event on successful loading', async () => {
+      const ttsService = new TTSService();
+      const events = [];
+      
+      ttsService.on('voiceLoadingSuccess', (data) => events.push({ type: 'success', data }));
+      
+      const mockVoices = [{ id: 'voice1', name: 'Voice 1' }];
+      ttsService.loadAvailableVoices = async () => mockVoices;
+      
+      await ttsService.loadVoicesWithRetry(3);
+      
+      expect(events).toHaveLength(1);
+      expect(events[0].type).toBe('success');
+      expect(events[0].data.voiceCount).toBe(1);
+      expect(events[0].data.attempt).toBe(1);
+    });
+
+    it('should handle manual retry correctly', async () => {
+      const ttsService = new TTSService();
+      
+      // Set up initial state
+      ttsService.isInitialized = true;
+      ttsService.availableVoices = [{ id: 'old-voice' }];
+      
+      const mockVoices = [{ id: 'new-voice', name: 'New Voice' }];
+      ttsService.loadAvailableVoices = async () => mockVoices;
+      
+      await ttsService.retryVoiceLoading();
+      
+      expect(ttsService.isInitialized).toBe(true);
+      expect(ttsService.availableVoices).toEqual(mockVoices);
+    });
+  });
+
+  describe('Sleep Utility Function', () => {
+    it('should resolve after specified delay', async () => {
+      const ttsService = new TTSService();
+      const startTime = Date.now();
+      
+      await ttsService.sleep(100);
+      
+      const endTime = Date.now();
+      const elapsed = endTime - startTime;
+      
+      // Allow some tolerance for timing
+      expect(elapsed).toBeGreaterThanOrEqual(90);
+      expect(elapsed).toBeLessThan(200);
+    });
+
+    it('should handle zero delay', async () => {
+      const ttsService = new TTSService();
+      
+      const startTime = Date.now();
+      await ttsService.sleep(0);
+      const endTime = Date.now();
+      
+      expect(endTime - startTime).toBeLessThan(50);
+    });
+  });
+
+  describe('Exponential Backoff', () => {
+    it('should calculate correct retry delays', async () => {
+      const ttsService = new TTSService();
+      const delays = [];
+      
+      // Mock sleep to capture delays
+      ttsService.sleep = async (ms) => {
+        delays.push(ms);
+        return Promise.resolve();
+      };
+      
+      // Mock failing voice loading
+      ttsService.loadAvailableVoices = async () => {
+        throw new Error('Test error');
+      };
+      
+      await ttsService.loadVoicesWithRetry(3);
+      
+      expect(delays).toHaveLength(2); // 2 retries for 3 attempts
+      expect(delays[0]).toBe(2000); // 2^1 * 1000
+      expect(delays[1]).toBe(4000); // 2^2 * 1000
+    });
+
+    it('should not delay after last attempt', async () => {
+      const ttsService = new TTSService();
+      let sleepCalled = false;
+      
+      // Mock sleep to detect if called
+      ttsService.sleep = async () => {
+        sleepCalled = true;
+        return Promise.resolve();
+      };
+      
+      // Mock failing voice loading
+      ttsService.loadAvailableVoices = async () => {
+        throw new Error('Test error');
+      };
+      
+      await ttsService.loadVoicesWithRetry(1); // Only 1 attempt
+      
+      expect(sleepCalled).toBe(false);
     });
   });
 

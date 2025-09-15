@@ -38,17 +38,5 @@ Section "Uninstall"
   RMDir /r "$LOCALAPPDATA\SpeechMaker"
 SectionEnd
 
-# Custom function to check for FFmpeg
-Function CheckFFmpeg
-  # Check if FFmpeg is available in PATH
-  nsExec::ExecToStack 'ffmpeg -version'
-  Pop $0
-  ${If} $0 != 0
-    MessageBox MB_ICONINFORMATION "FFmpeg not detected. SpeechMaker can still convert to WAV format, but MP3 conversion requires FFmpeg.$\n$\nTo enable MP3 support, please install FFmpeg from https://ffmpeg.org/download.html"
-  ${EndIf}
-FunctionEnd
-
-# Call FFmpeg check after installation
-Function .onInstSuccess
-  Call CheckFFmpeg
-FunctionEnd
+# FFmpeg is now bundled with the application - no need for external check
+# The application will handle FFmpeg detection and fallback internally

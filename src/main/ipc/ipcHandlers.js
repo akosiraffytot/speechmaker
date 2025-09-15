@@ -85,6 +85,15 @@ class IPCHandlers {
                 throw this.createSecureError('Failed to get default settings', error);
             }
         });
+
+        ipcMain.handle('settings:getDefaultOutputFolder', () => {
+            try {
+                return this.services.settingsManager.getDefaultOutputFolder();
+            } catch (error) {
+                this.handleError('settings:getDefaultOutputFolder', error);
+                throw this.createSecureError('Failed to get default output folder', error);
+            }
+        });
     }
 
     /**
@@ -135,6 +144,64 @@ class IPCHandlers {
             } catch (error) {
                 this.handleError('tts:preview', error);
                 throw this.createSecureError('Preview failed', error);
+            }
+        });
+
+        ipcMain.handle('tts:retryVoiceLoading', async () => {
+            try {
+                const result = await this.services.ttsService.retryVoiceLoading();
+                
+                // Send updated voice status to renderer
+                if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                    if (result.success) {
+                        this.mainWindow.webContents.send('voices:loaded', {
+                            voices: result.voices,
+                            attempts: result.attempts || 1,
+                            success: true
+                        });
+                    } else {
+                        this.mainWindow.webContents.send('voices:load-failed', {
+                            error: result.error?.message || 'Retry failed',
+                            attempts: result.attempts || 1,
+                            troubleshooting: result.troubleshooting || this.services.ttsService.getTroubleshootingSteps(),
+                            success: false
+                        });
+                    }
+                }
+                
+                return result;
+            } catch (error) {
+                this.handleError('tts:retryVoiceLoading', error);
+                
+                // Send error to renderer
+                if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                    this.mainWindow.webContents.send('voices:load-failed', {
+                        error: error.message,
+                        attempts: 1,
+                        troubleshooting: this.services.ttsService.getTroubleshootingSteps(),
+                        success: false
+                    });
+                }
+                
+                throw this.createSecureError('Voice loading retry failed', error);
+            }
+        });
+
+        ipcMain.handle('tts:getVoiceLoadingState', () => {
+            try {
+                return this.services.ttsService.getVoiceLoadingState();
+            } catch (error) {
+                this.handleError('tts:getVoiceLoadingState', error);
+                throw this.createSecureError('Failed to get voice loading state', error);
+            }
+        });
+
+        ipcMain.handle('tts:getTroubleshootingSteps', () => {
+            try {
+                return this.services.ttsService.getTroubleshootingSteps();
+            } catch (error) {
+                this.handleError('tts:getTroubleshootingSteps', error);
+                throw this.createSecureError('Failed to get troubleshooting steps', error);
             }
         });
     }
@@ -215,6 +282,92 @@ class IPCHandlers {
             } catch (error) {
                 this.handleError('system:checkFFmpeg', error);
                 throw this.createSecureError('FFmpeg check failed', error);
+            }
+        });
+
+        ipcMain.handle('system:getFFmpegStatus', async () => {
+            try {
+                return this.services.audioProcessor.getFFmpegStatus();
+            } catch (error) {
+                this.handleError('system:getFFmpegStatus', error);
+                throw this.createSecureError('Failed to get FFmpeg status', error);
+            }
+        });
+
+        ipcMain.handle('system:initializeFFmpeg', async () => {
+            try {
+                return await this.services.audioProcessor.initializeFFmpeg();
+            } catch (error) {
+                this.handleError('system:initializeFFmpeg', error);
+                throw this.createSecureError('FFmpeg initialization failed', error);
+            }
+        });
+
+        ipcMain.handle('system:getInitializationStatus', async () => {
+            try {
+                // Get current status from all services
+                const ffmpegStatus = this.services.audioProcessor.getFFmpegStatus();
+                const voiceStatus = this.services.ttsService.getStatus();
+                const isReady = voiceStatus.isInitialized && voiceStatus.voiceCount > 0;
+                
+                return {
+                    ffmpeg: ffmpegStatus,
+                    voices: {
+                        success: voiceStatus.isInitialized,
+                        voices: voiceStatus.voiceCount > 0 ? [] : [], // Don't send full voice list here
+                        count: voiceStatus.voiceCount,
+                        isInitialized: voiceStatus.isInitialized,
+                        loadingState: voiceStatus.voiceLoadingState
+                    },
+                    ready: isReady,
+                    timestamp: Date.now()
+                };
+            } catch (error) {
+                this.handleError('system:getInitializationStatus', error);
+                throw this.createSecureError('Failed to get initialization status', error);
+            }
+        });
+
+        ipcMain.handle('system:reinitialize', async () => {
+            try {
+                // Reinitialize both FFmpeg and voices
+                const ffmpegPromise = this.services.audioProcessor.initializeFFmpeg();
+                const voicePromise = this.services.ttsService.retryVoiceLoading();
+                
+                const [ffmpegResult, voiceResult] = await Promise.allSettled([
+                    ffmpegPromise,
+                    voicePromise
+                ]);
+                
+                const ffmpegStatus = ffmpegResult.status === 'fulfilled' 
+                    ? ffmpegResult.value 
+                    : { available: false, error: ffmpegResult.reason?.message };
+                    
+                const voiceStatus = voiceResult.status === 'fulfilled' 
+                    ? voiceResult.value 
+                    : { success: false, error: voiceResult.reason?.message };
+                
+                // Send updates to renderer
+                if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                    this.mainWindow.webContents.send('initialization:update', {
+                        type: 'reinitialize-complete',
+                        data: {
+                            ffmpeg: ffmpegStatus,
+                            voices: voiceStatus,
+                            message: 'Reinitialization complete'
+                        },
+                        timestamp: Date.now()
+                    });
+                }
+                
+                return {
+                    success: true,
+                    ffmpeg: ffmpegStatus,
+                    voices: voiceStatus
+                };
+            } catch (error) {
+                this.handleError('system:reinitialize', error);
+                throw this.createSecureError('System reinitialization failed', error);
             }
         });
 
@@ -621,6 +774,30 @@ class IPCHandlers {
     }
 
     /**
+     * Clean up IPC handlers and active conversions
+     * Called during application shutdown
+     */
+    cleanup() {
+        try {
+            // Cancel all active conversions
+            for (const [jobId, conversion] of this.activeConversions) {
+                if (conversion.process) {
+                    conversion.process.kill();
+                }
+                conversion.cancelled = true;
+            }
+            this.activeConversions.clear();
+            
+            // Remove all IPC handlers
+            ipcMain.removeAllListeners();
+            
+            console.log('IPCHandlers cleanup completed');
+        } catch (error) {
+            console.error('Error during IPCHandlers cleanup:', error);
+        }
+    }
+
+    /**
      * Handle and log errors securely
      */
     handleError(operation, error) {
@@ -675,12 +852,19 @@ class IPCHandlers {
         ipcMain.removeAllListeners('tts:convert');
         ipcMain.removeAllListeners('tts:cancel');
         ipcMain.removeAllListeners('tts:preview');
+        ipcMain.removeAllListeners('tts:retryVoiceLoading');
+        ipcMain.removeAllListeners('tts:getVoiceLoadingState');
+        ipcMain.removeAllListeners('tts:getTroubleshootingSteps');
         
         ipcMain.removeAllListeners('file:select');
         ipcMain.removeAllListeners('file:selectFolder');
         ipcMain.removeAllListeners('file:validate');
         
         ipcMain.removeAllListeners('system:checkFFmpeg');
+        ipcMain.removeAllListeners('system:getFFmpegStatus');
+        ipcMain.removeAllListeners('system:initializeFFmpeg');
+        ipcMain.removeAllListeners('system:getInitializationStatus');
+        ipcMain.removeAllListeners('system:reinitialize');
         ipcMain.removeAllListeners('system:getVersion');
         
         ipcMain.removeAllListeners('error:getRecent');

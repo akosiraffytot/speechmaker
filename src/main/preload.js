@@ -18,6 +18,9 @@ const ALLOWED_CHANNELS = {
   'tts:error': true,
   'tts:cancelled': true,
   'tts:initialization-error': true,
+  'tts:retryVoiceLoading': true,
+  'tts:getVoiceLoadingState': true,
+  'tts:getTroubleshootingSteps': true,
   
   // File operations
   'file:select': true,
@@ -30,9 +33,12 @@ const ALLOWED_CHANNELS = {
   'settings:update': true,
   'settings:reset': true,
   'settings:getDefaults': true,
+  'settings:getDefaultOutputFolder': true,
   
   // System operations
   'system:checkFFmpeg': true,
+  'system:getFFmpegStatus': true,
+  'system:initializeFFmpeg': true,
   'system:getVersion': true,
   
   // Error handling
@@ -42,6 +48,14 @@ const ALLOWED_CHANNELS = {
   // Service initialization
   'services:ready': true,
   'services:error': true,
+  
+  // Initialization events
+  'initialization:complete': true,
+  'initialization:error': true,
+  'initialization:update': true,
+  'ffmpeg:status-update': true,
+  'voices:loaded': true,
+  'voices:load-failed': true,
   
   // Error management
   'error:getRecent': true,
@@ -127,6 +141,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     }
     return secureInvoke('tts:preview', data);
   },
+  retryVoiceLoading: () => secureInvoke('tts:retryVoiceLoading'),
+  getVoiceLoadingState: () => secureInvoke('tts:getVoiceLoadingState'),
+  getTroubleshootingSteps: () => secureInvoke('tts:getTroubleshootingSteps'),
   
   // File operations
   selectFile: () => secureInvoke('file:select'),
@@ -157,8 +174,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getDefaults: () => secureInvoke('settings:getDefaults')
   },
   
+  // Output folder operations
+  getDefaultOutputFolder: () => secureInvoke('settings:getDefaultOutputFolder'),
+  
   // System operations
   checkFFmpeg: () => secureInvoke('system:checkFFmpeg'),
+  getFFmpegStatus: () => secureInvoke('system:getFFmpegStatus'),
+  initializeFFmpeg: () => secureInvoke('system:initializeFFmpeg'),
   getVersion: () => secureInvoke('system:getVersion'),
   
   // Error management
@@ -185,6 +207,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onServiceReady: (callback) => secureOn('services:ready', callback),
   onServiceError: (callback) => secureOn('services:error', callback),
   onTTSInitError: (callback) => secureOn('tts:initialization-error', callback),
+  
+  // New initialization event listeners
+  onInitializationComplete: (callback) => secureOn('initialization:complete', callback),
+  onInitializationError: (callback) => secureOn('initialization:error', callback),
+  onInitializationUpdate: (callback) => secureOn('initialization:update', callback),
+  onFFmpegStatusUpdate: (callback) => secureOn('ffmpeg:status-update', callback),
+  onVoicesLoaded: (callback) => secureOn('voices:loaded', callback),
+  onVoicesLoadFailed: (callback) => secureOn('voices:load-failed', callback),
   
   // Legacy support for existing renderer code
   onProgressUpdate: (callback) => secureOn('tts:progress', callback),

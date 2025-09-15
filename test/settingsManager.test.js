@@ -2,11 +2,13 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { promises as fs } from 'fs';
 import { join, dirname } from 'path';
 import { app } from 'electron';
+import os from 'os';
 import SettingsManager from '../src/main/services/settingsManager.js';
 
 // Mock the dependencies
 vi.mock('fs');
 vi.mock('path');
+vi.mock('os');
 vi.mock('electron', () => ({
     app: {
         getPath: vi.fn()
@@ -301,6 +303,327 @@ describe('SettingsManager', () => {
 
         it('should return null if not initialized', () => {
             expect(settingsManager.getSettingsPath()).toBeNull();
+        });
+    });
+
+    describe('getDefaultOutputFolder', () => {
+        beforeEach(() => {
+            // Mock os module functions
+            os.homedir.mockReturnValue('/home/user');
+            os.tmpdir.mockReturnValue('/tmp');
+            
+            // Mock path.join calls
+            join.mockImplementation((...args) => args.join('/'));
+        });
+
+        it('should return Documents/SpeechMaker if accessible', () => {
+            // Mock ensureDirectoryExists to return true for Documents path
+            settingsManager.ensureDirectoryExists = vi.fn().mockReturnValue(true);
+
+            const result = settingsManager.getDefaultOutputFolder();
+
+            expect(result).toBe('/home/user/Documents/SpeechMaker');
+            expect(settingsManager.ensureDirectoryExists).toHaveBeenCalledWith('/home/user/Documents/SpeechMaker');
+        });
+
+        it('should fallback to Home/SpeechMaker if Documents is not accessible', () => {
+            // Mock ensureDirectoryExists to return false for Documents, true for Home
+            settingsManager.ensureDirectoryExists = vi.fn()
+                .mockReturnValueOnce(false) // Documents fails
+                .mockReturnValueOnce(true); // Home succeeds
+
+            const result = settingsManager.getDefaultOutputFolder();
+
+            expect(result).toBe('/home/user/SpeechMaker');
+        });
+
+        it('should fallback to temp directory if both Documents and Home are not accessible', () => {
+            // Mock ensureDirectoryExists to return false for both paths
+            settingsManager.ensureDirectoryExists = vi.fn().mockReturnValue(false);
+
+            const result = settingsManager.getDefaultOutputFolder();
+
+            expect(result).toBe('/tmp');
+            expect(os.tmpdir).toHaveBeenCalled();
+        });
+    });
+
+    describe('ensureDirectoryExists', () => {
+        beforeEach(() => {
+            join.mockImplementation((...args) => args.join('/'));
+        });
+
+        it('should return true if directory exists and is writable', () => {
+            // Test the actual implementation with a valid path
+            const result = settingsManager.ensureDirectoryExists(os.tmpdir());
+            expect(result).toBe(true);
+        });
+
+        it('should return false if directory creation fails', () => {
+            // Test with an invalid path that should fail
+            const result = settingsManager.ensureDirectoryExists('/invalid/path/that/cannot/be/created');
+            expect(result).toBe(false);
+        });
+    });
+
+    describe('initializeDefaultOutputFolder', () => {
+        beforeEach(() => {
+            os.homedir.mockReturnValue('/home/user');
+            os.tmpdir.mockReturnValue('/tmp');
+            fs.mkdir.mockResolvedValue();
+            join.mockImplementation((...args) => args.join('/'));
+        });
+
+        it('should set default output folder if none exists', async () => {
+            const existingSettings = { defaultOutputPath: null };
+            
+            fs.access.mockResolvedValue();
+            fs.readFile.mockResolvedValue(JSON.stringify(existingSettings));
+            fs.writeFile.mockResolvedValue();
+
+            // Mock the methods to avoid calling initialize
+            settingsManager.settingsPath = '/mock/settings.json';
+            settingsManager.loadSettings = vi.fn().mockResolvedValue(existingSettings);
+            settingsManager.updateSetting = vi.fn().mockResolvedValue(true);
+            settingsManager.getDefaultOutputFolder = vi.fn().mockReturnValue('/home/user/Documents/SpeechMaker');
+
+            const result = await settingsManager.initializeDefaultOutputFolder();
+
+            expect(result).toBe('/home/user/Documents/SpeechMaker');
+            expect(settingsManager.getDefaultOutputFolder).toHaveBeenCalled();
+            expect(settingsManager.updateSetting).toHaveBeenCalledWith('defaultOutputPath', '/home/user/Documents/SpeechMaker');
+        });
+
+        it('should verify existing output path is still accessible', async () => {
+            const existingSettings = { defaultOutputPath: '/existing/path' };
+            
+            settingsManager.settingsPath = '/mock/settings.json';
+            settingsManager.loadSettings = vi.fn().mockResolvedValue(existingSettings);
+            settingsManager.ensureDirectoryExists = vi.fn().mockReturnValue(true);
+
+            const result = await settingsManager.initializeDefaultOutputFolder();
+
+            expect(result).toBe('/existing/path');
+            expect(settingsManager.ensureDirectoryExists).toHaveBeenCalledWith('/existing/path');
+        });
+
+        it('should update path if existing path is no longer accessible', async () => {
+            const existingSettings = { defaultOutputPath: '/inaccessible/path' };
+            
+            settingsManager.settingsPath = '/mock/settings.json';
+            settingsManager.loadSettings = vi.fn().mockResolvedValue(existingSettings);
+            settingsManager.updateSetting = vi.fn().mockResolvedValue(true);
+            settingsManager.ensureDirectoryExists = vi.fn()
+                .mockReturnValueOnce(false) // Existing path fails
+                .mockReturnValue(true); // New path succeeds
+            settingsManager.getDefaultOutputFolder = vi.fn().mockReturnValue('/home/user/Documents/SpeechMaker');
+
+            const result = await settingsManager.initializeDefaultOutputFolder();
+
+            expect(result).toBe('/home/user/Documents/SpeechMaker');
+            expect(settingsManager.getDefaultOutputFolder).toHaveBeenCalled();
+            expect(settingsManager.updateSetting).toHaveBeenCalledWith('defaultOutputPath', '/home/user/Documents/SpeechMaker');
+        });
+
+        it('should fallback to temp directory if initialization fails', async () => {
+            settingsManager.settingsPath = '/mock/settings.json';
+            settingsManager.loadSettings = vi.fn().mockRejectedValue(new Error('Settings load failed'));
+
+            const result = await settingsManager.initializeDefaultOutputFolder();
+
+            expect(result).toBe('/tmp');
+        });
+    });
+
+    describe('migrateSettings', () => {
+        beforeEach(() => {
+            os.homedir.mockReturnValue('/home/user');
+            join.mockImplementation((...args) => args.join('/'));
+        });
+
+        it('should migrate outputPath to defaultOutputPath', async () => {
+            const oldSettings = {
+                outputPath: '/old/output/path',
+                voiceSpeed: 1.0
+            };
+
+            settingsManager.ensureDirectoryExists = vi.fn().mockReturnValue(true);
+
+            const result = await settingsManager.migrateSettings(oldSettings);
+
+            expect(result.defaultOutputPath).toBe('/old/output/path');
+            expect(result.outputPath).toBeUndefined();
+            expect(result.voiceSpeed).toBe(1.0);
+        });
+
+        it('should migrate selectedVoice to lastSelectedVoice', async () => {
+            const oldSettings = {
+                selectedVoice: 'Microsoft David Desktop',
+                voiceSpeed: 1.0
+            };
+
+            settingsManager.ensureDirectoryExists = vi.fn().mockReturnValue(true);
+            settingsManager.getDefaultOutputFolder = vi.fn().mockReturnValue('/home/user/Documents/SpeechMaker');
+
+            const result = await settingsManager.migrateSettings(oldSettings);
+
+            expect(result.lastSelectedVoice).toBe('Microsoft David Desktop');
+            expect(result.selectedVoice).toBeUndefined();
+        });
+
+        it('should set default output folder if none exists or is inaccessible', async () => {
+            const oldSettings = {
+                defaultOutputPath: '/inaccessible/path',
+                voiceSpeed: 1.0
+            };
+
+            settingsManager.ensureDirectoryExists = vi.fn().mockReturnValue(false);
+            settingsManager.getDefaultOutputFolder = vi.fn().mockReturnValue('/home/user/Documents/SpeechMaker');
+
+            const result = await settingsManager.migrateSettings(oldSettings);
+
+            expect(result.defaultOutputPath).toBe('/home/user/Documents/SpeechMaker');
+        });
+
+        it('should reset invalid windowBounds', async () => {
+            const oldSettings = {
+                windowBounds: 'invalid',
+                voiceSpeed: 1.0
+            };
+
+            settingsManager.ensureDirectoryExists = vi.fn().mockReturnValue(true);
+            settingsManager.getDefaultOutputFolder = vi.fn().mockReturnValue('/home/user/Documents/SpeechMaker');
+
+            const result = await settingsManager.migrateSettings(oldSettings);
+
+            expect(result.windowBounds).toEqual({
+                width: 800,
+                height: 600,
+                x: undefined,
+                y: undefined
+            });
+        });
+
+        it('should reset invalid voice speed', async () => {
+            const oldSettings = {
+                voiceSpeed: 5.0, // Out of range
+                defaultOutputPath: '/valid/path'
+            };
+
+            settingsManager.ensureDirectoryExists = vi.fn().mockReturnValue(true);
+
+            const result = await settingsManager.migrateSettings(oldSettings);
+
+            expect(result.voiceSpeed).toBe(1.0);
+        });
+
+        it('should handle migration errors gracefully', async () => {
+            const oldSettings = { voiceSpeed: 1.0 };
+
+            // Mock getDefaultOutputFolder to throw an error
+            settingsManager.getDefaultOutputFolder = vi.fn().mockImplementation(() => {
+                throw new Error('Folder access error');
+            });
+
+            const result = await settingsManager.migrateSettings(oldSettings);
+
+            // Should return original settings if migration fails
+            expect(result).toEqual(oldSettings);
+        });
+
+        it('should not perform migration if no changes needed', async () => {
+            const currentSettings = {
+                lastSelectedVoice: 'Microsoft David Desktop',
+                defaultOutputPath: '/valid/path',
+                voiceSpeed: 1.0,
+                windowBounds: { width: 800, height: 600, x: undefined, y: undefined }
+            };
+
+            settingsManager.ensureDirectoryExists = vi.fn().mockReturnValue(true);
+
+            const result = await settingsManager.migrateSettings(currentSettings);
+
+            expect(result).toEqual(currentSettings);
+        });
+    });
+
+    describe('enhanced validateSettings', () => {
+        beforeEach(() => {
+            os.homedir.mockReturnValue('/home/user');
+            join.mockImplementation((...args) => args.join('/'));
+        });
+
+        it('should validate defaultOutputPath accessibility', () => {
+            const settings = {
+                defaultOutputPath: '/valid/path',
+                voiceSpeed: 1.0
+            };
+
+            settingsManager.ensureDirectoryExists = vi.fn().mockReturnValue(true);
+
+            const result = settingsManager.validateSettings(settings);
+
+            expect(result.defaultOutputPath).toBe('/valid/path');
+            expect(settingsManager.ensureDirectoryExists).toHaveBeenCalledWith('/valid/path');
+        });
+
+        it('should fallback to default folder if path is inaccessible', () => {
+            const settings = {
+                defaultOutputPath: '/inaccessible/path',
+                voiceSpeed: 1.0
+            };
+
+            settingsManager.ensureDirectoryExists = vi.fn().mockReturnValue(false);
+            settingsManager.getDefaultOutputFolder = vi.fn().mockReturnValue('/home/user/Documents/SpeechMaker');
+
+            const result = settingsManager.validateSettings(settings);
+
+            expect(result.defaultOutputPath).toBe('/home/user/Documents/SpeechMaker');
+        });
+
+        it('should ensure default output path is always set', () => {
+            const settings = {
+                voiceSpeed: 1.0
+                // No defaultOutputPath
+            };
+
+            settingsManager.getDefaultOutputFolder = vi.fn().mockReturnValue('/home/user/Documents/SpeechMaker');
+
+            const result = settingsManager.validateSettings(settings);
+
+            expect(result.defaultOutputPath).toBe('/home/user/Documents/SpeechMaker');
+        });
+
+        it('should validate window bounds with proper ranges', () => {
+            const settings = {
+                windowBounds: {
+                    width: 5000, // Too large
+                    height: 100, // Too small
+                    x: -5000, // Too far left
+                    y: 5000 // Too far down
+                }
+            };
+
+            settingsManager.getDefaultOutputFolder = vi.fn().mockReturnValue('/home/user/Documents/SpeechMaker');
+
+            const result = settingsManager.validateSettings(settings);
+
+            expect(result.windowBounds.width).toBe(800); // Should use default
+            expect(result.windowBounds.height).toBe(600); // Should use default
+            expect(result.windowBounds.x).toBeUndefined(); // Should use default
+            expect(result.windowBounds.y).toBeUndefined(); // Should use default
+        });
+
+        it('should validate maxChunkLength with proper minimum', () => {
+            const settings = {
+                maxChunkLength: 500 // Below minimum
+            };
+
+            settingsManager.getDefaultOutputFolder = vi.fn().mockReturnValue('/home/user/Documents/SpeechMaker');
+
+            const result = settingsManager.validateSettings(settings);
+
+            expect(result.maxChunkLength).toBe(5000); // Should use default
         });
     });
 });
