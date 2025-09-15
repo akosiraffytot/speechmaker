@@ -4,6 +4,10 @@ const path = require('path');
 const { EventEmitter } = require('events');
 const ErrorHandler = require('./errorHandler.js');
 
+// Import edge-tts library functions (ES module)
+let edgeTTS;
+let edgeTTSImportPromise;
+
 /**
  * TTS Service for converting text to speech using Microsoft Edge TTS
  * Implements requirements 1.1, 1.2, 1.3, and 2.3
@@ -15,7 +19,7 @@ class TTSService extends EventEmitter {
         this.maxChunkLength = 5000; // Maximum characters per chunk to prevent memory issues
         this.isInitialized = false;
         this.errorHandler = new ErrorHandler();
-        
+
         // Voice loading state management
         this.voiceLoadingState = {
             isLoading: false,
@@ -24,6 +28,34 @@ class TTSService extends EventEmitter {
             lastError: null,
             retryDelay: 0
         };
+
+        // Initialize edge-tts library
+        this.initializeEdgeTTS();
+    }
+
+    /**
+     * Initialize the edge-tts ES module
+     */
+    async initializeEdgeTTS() {
+        if (!edgeTTSImportPromise) {
+            edgeTTSImportPromise = this.importEdgeTTS();
+        }
+        return edgeTTSImportPromise;
+    }
+
+    /**
+     * Import edge-tts library using dynamic import for ES modules
+     */
+    async importEdgeTTS() {
+        try {
+            // Try to import the compiled JavaScript version first
+            edgeTTS = await import('edge-tts/out/index.js');
+            console.log('edge-tts library loaded successfully');
+            return edgeTTS;
+        } catch (error) {
+            console.warn('Failed to load edge-tts library:', error.message);
+            throw new Error(`edge-tts library not available: ${error.message}`);
+        }
     }
 
     /**
@@ -38,7 +70,7 @@ class TTSService extends EventEmitter {
 
         try {
             const result = await this.loadVoicesWithRetry();
-            
+
             if (result.success) {
                 this.availableVoices = result.voices;
                 this.isInitialized = true;
@@ -47,7 +79,7 @@ class TTSService extends EventEmitter {
                     attempts: result.attempt
                 });
             } else {
-                const enhancedError = this.errorHandler.handleTTSVoiceError(result.error, { 
+                const enhancedError = this.errorHandler.handleTTSVoiceError(result.error, {
                     operation: 'initialize',
                     attempts: result.attempts,
                     troubleshooting: result.troubleshooting
@@ -83,37 +115,37 @@ class TTSService extends EventEmitter {
         this.voiceLoadingState.maxAttempts = maxRetries;
         this.voiceLoadingState.currentAttempt = 0;
         this.voiceLoadingState.lastError = null;
-        
+
         this.emit('voiceLoadingStarted', {
             maxAttempts: maxRetries
         });
-        
+
         let lastError;
-        
+
         for (let attempt = 1; attempt <= maxRetries; attempt++) {
             this.voiceLoadingState.currentAttempt = attempt;
-            
+
             try {
                 this.emit('voiceLoadingAttempt', {
                     attempt,
                     maxAttempts: maxRetries
                 });
-                
+
                 const voices = await this.loadAvailableVoices();
                 if (voices && voices.length > 0) {
                     // Success - reset state
                     this.voiceLoadingState.isLoading = false;
                     this.voiceLoadingState.lastError = null;
-                    
+
                     this.emit('voiceLoadingSuccess', {
                         voiceCount: voices.length,
                         attempt,
                         totalAttempts: maxRetries
                     });
-                    
-                    return { 
-                        success: true, 
-                        voices, 
+
+                    return {
+                        success: true,
+                        voices,
                         attempt,
                         totalAttempts: maxRetries
                     };
@@ -121,12 +153,12 @@ class TTSService extends EventEmitter {
             } catch (error) {
                 lastError = error;
                 this.voiceLoadingState.lastError = error;
-                
+
                 // If this isn't the last attempt, wait before retrying
                 if (attempt < maxRetries) {
                     const delay = Math.pow(2, attempt) * 1000; // Exponential backoff: 2s, 4s, 8s
                     this.voiceLoadingState.retryDelay = delay;
-                    
+
                     this.emit('voiceLoadRetry', {
                         attempt,
                         maxRetries,
@@ -134,24 +166,24 @@ class TTSService extends EventEmitter {
                         error: error.message,
                         nextRetryIn: delay / 1000
                     });
-                    
+
                     await this.sleep(delay);
                 }
             }
         }
-        
+
         // All retries failed - update state
         this.voiceLoadingState.isLoading = false;
-        
+
         this.emit('voiceLoadingFailed', {
             attempts: maxRetries,
             error: lastError?.message,
             troubleshooting: this.getTroubleshootingSteps()
         });
-        
-        return { 
-            success: false, 
-            error: lastError, 
+
+        return {
+            success: false,
+            error: lastError,
             attempts: maxRetries,
             troubleshooting: this.getTroubleshootingSteps()
         };
@@ -171,106 +203,93 @@ class TTSService extends EventEmitter {
      */
     getTroubleshootingSteps() {
         return [
-            'Ensure Windows Speech Platform is installed and enabled',
-            'Check Windows TTS settings in Control Panel > Speech',
-            'Verify that edge-tts is properly installed (npm install -g edge-tts)',
-            'Restart the application as administrator',
-            'Check Windows updates and install any pending updates',
-            'Try running "edge-tts --list-voices" in command prompt to test manually',
-            'Ensure no antivirus software is blocking the edge-tts executable'
+            'Check your internet connection (edge-tts requires online access)',
+            'Verify that the edge-tts package is properly installed in node_modules',
+            'Restart the application to refresh the TTS service',
+            'Check if your firewall or antivirus is blocking network requests',
+            'Try running the application as administrator if network issues persist',
+            'Ensure you have a stable internet connection to Microsoft\'s TTS service',
+            'Check Windows updates and install any pending updates'
         ];
     }
 
     /**
-     * Load available voices from edge-tts
-     * Uses edge-tts command line to get voice list
+     * Load available voices from edge-tts library
+     * Uses the JavaScript API instead of command line
      */
     async loadAvailableVoices() {
-        return new Promise((resolve, reject) => {
-            const process = spawn('edge-tts', ['--list-voices'], {
-                stdio: ['pipe', 'pipe', 'pipe']
-            });
+        try {
+            // Ensure edge-tts is loaded
+            await this.initializeEdgeTTS();
 
-            let output = '';
-            let errorOutput = '';
+            if (!edgeTTS || !edgeTTS.getVoices) {
+                throw new Error('edge-tts library not available or not properly imported');
+            }
 
-            process.stdout.on('data', (data) => {
-                output += data.toString();
-            });
+            const voices = await edgeTTS.getVoices();
 
-            process.stderr.on('data', (data) => {
-                errorOutput += data.toString();
-            });
+            if (!voices || voices.length === 0) {
+                throw new Error('No voices returned from edge-tts service');
+            }
 
-            process.on('close', (code) => {
-                if (code !== 0) {
-                    const error = new Error(`Failed to get voices: ${errorOutput}`);
-                    const enhancedError = this.errorHandler.handleTTSVoiceError(error, { operation: 'loadVoices' });
-                    reject(enhancedError);
-                    return;
-                }
-
-                try {
-                    this.availableVoices = this.parseVoiceList(output);
-                    resolve(this.availableVoices);
-                } catch (error) {
-                    const enhancedError = this.errorHandler.handleTTSVoiceError(error, { operation: 'parseVoices' });
-                    reject(enhancedError);
-                }
-            });
-
-            process.on('error', (error) => {
-                const enhancedError = this.errorHandler.handleTTSVoiceError(error, { operation: 'executeEdgeTTS' });
-                reject(enhancedError);
-            });
-        });
+            this.availableVoices = this.parseVoiceListFromAPI(voices);
+            return this.availableVoices;
+        } catch (error) {
+            const enhancedError = this.errorHandler.handleTTSVoiceError(error, { operation: 'loadVoices' });
+            throw enhancedError;
+        }
     }
 
     /**
-     * Parse the voice list output from edge-tts
+     * Parse the voice list from edge-tts API response
      */
-    parseVoiceList(output) {
+    parseVoiceListFromAPI(apiVoices) {
         const voices = [];
-        const lines = output.split('\n');
-        
-        for (const line of lines) {
-            if (line.trim()) {
-                try {
-                    // Parse voice information from edge-tts output
-                    // Format: Name: voice-name, Gender: Male/Female, Language: en-US
-                    const nameMatch = line.match(/Name:\s*([^,]+)/);
-                    const genderMatch = line.match(/Gender:\s*([^,]+)/);
-                    const languageMatch = line.match(/Language:\s*([^,\s]+)/);
 
-                    if (nameMatch) {
-                        const voice = {
-                            id: nameMatch[1].trim(),
-                            name: nameMatch[1].trim(),
-                            gender: genderMatch ? genderMatch[1].trim() : 'Unknown',
-                            language: languageMatch ? languageMatch[1].trim() : 'Unknown',
-                            isDefault: false
-                        };
+        for (const apiVoice of apiVoices) {
+            try {
+                const voice = {
+                    id: apiVoice.ShortName || apiVoice.Name,
+                    name: apiVoice.FriendlyName || apiVoice.Name,
+                    gender: apiVoice.Gender || 'Unknown',
+                    language: apiVoice.Locale || 'Unknown',
+                    isDefault: false,
+                    shortName: apiVoice.ShortName,
+                    fullName: apiVoice.Name,
+                    categories: apiVoice.VoiceTag?.ContentCategories || [],
+                    personalities: apiVoice.VoiceTag?.VoicePersonalities || []
+                };
 
-                        // Mark first English voice as default
-                        if (voices.length === 0 && voice.language.startsWith('en')) {
-                            voice.isDefault = true;
-                        }
-
-                        voices.push(voice);
-                    }
-                } catch (error) {
-                    // Skip malformed lines
-                    continue;
+                // Mark first English voice as default
+                if (voices.length === 0 && voice.language.startsWith('en')) {
+                    voice.isDefault = true;
                 }
+
+                voices.push(voice);
+            } catch (error) {
+                // Skip malformed voice entries
+                console.warn('Skipping malformed voice entry:', apiVoice, error);
+                continue;
             }
         }
 
         if (voices.length === 0) {
-            const error = new Error('No TTS voices found. Please ensure Windows TTS is properly installed.');
+            const error = new Error('No TTS voices found from edge-tts service.');
             throw this.errorHandler.handleTTSVoiceError(error, { operation: 'parseVoiceList' });
         }
 
         return voices;
+    }
+
+    /**
+     * Legacy method for backward compatibility
+     * Parse the voice list output from edge-tts CLI (no longer used)
+     */
+    parseVoiceList(output) {
+        // This method is kept for backward compatibility but is no longer used
+        // since we're using the JavaScript API instead of CLI
+        console.warn('parseVoiceList called - this method is deprecated, use parseVoiceListFromAPI instead');
+        return [];
     }
 
     /**
@@ -324,13 +343,13 @@ class TTSService extends EventEmitter {
                 this.emit('error', error);
                 throw error;
             }
-            
+
             // Otherwise, enhance the error
-            const enhancedError = this.errorHandler.handleTTSVoiceError(error, { 
-                operation: 'convertTextToSpeech', 
-                voiceId, 
-                speed, 
-                outputPath 
+            const enhancedError = this.errorHandler.handleTTSVoiceError(error, {
+                operation: 'convertTextToSpeech',
+                voiceId,
+                speed,
+                outputPath
             });
             this.emit('error', enhancedError);
             throw enhancedError;
@@ -338,58 +357,42 @@ class TTSService extends EventEmitter {
     }
 
     /**
-     * Convert a single chunk of text to speech
+     * Convert a single chunk of text to speech using edge-tts library
      */
     async convertSingleChunk(text, voiceId, speed, outputPath) {
-        return new Promise((resolve, reject) => {
+        try {
+            // Ensure edge-tts is loaded
+            await this.initializeEdgeTTS();
+
+            if (!edgeTTS || !edgeTTS.ttsSave) {
+                throw new Error('edge-tts library not available or not properly imported');
+            }
+
             // Calculate rate parameter for edge-tts (percentage change from normal speed)
             const ratePercent = Math.round((speed - 1.0) * 100);
             const rateParam = ratePercent >= 0 ? `+${ratePercent}%` : `${ratePercent}%`;
 
-            const args = [
-                '--voice', voiceId,
-                '--rate', rateParam,
-                '--text', text,
-                '--write-media', outputPath
-            ];
+            const options = {
+                voice: voiceId,
+                rate: rateParam,
+                volume: '+0%',
+                pitch: '+0Hz'
+            };
 
-            const process = spawn('edge-tts', args, {
-                stdio: ['pipe', 'pipe', 'pipe']
+            // Use the edge-tts library to save audio directly to file
+            await edgeTTS.ttsSave(text, outputPath, options);
+
+            this.emit('conversionComplete', { outputPath, text: text.substring(0, 50) + '...' });
+            return outputPath;
+        } catch (error) {
+            const enhancedError = this.errorHandler.handleTTSVoiceError(error, {
+                operation: 'convertSingleChunk',
+                voiceId,
+                speed,
+                outputPath
             });
-
-            let errorOutput = '';
-
-            process.stderr.on('data', (data) => {
-                errorOutput += data.toString();
-            });
-
-            process.on('close', (code) => {
-                if (code !== 0) {
-                    const error = new Error(`TTS conversion failed: ${errorOutput}`);
-                    const enhancedError = this.errorHandler.handleTTSVoiceError(error, { 
-                        operation: 'convertSingleChunk', 
-                        voiceId, 
-                        speed, 
-                        outputPath 
-                    });
-                    reject(enhancedError);
-                    return;
-                }
-
-                this.emit('conversionComplete', { outputPath, text: text.substring(0, 50) + '...' });
-                resolve(outputPath);
-            });
-
-            process.on('error', (error) => {
-                const enhancedError = this.errorHandler.handleTTSVoiceError(error, { 
-                    operation: 'convertSingleChunk', 
-                    voiceId, 
-                    speed, 
-                    outputPath 
-                });
-                reject(enhancedError);
-            });
-        });
+            throw enhancedError;
+        }
     }
 
     /**
@@ -399,7 +402,7 @@ class TTSService extends EventEmitter {
     async convertLargeTextToSpeech(text, voiceId, speed, outputPath) {
         const chunks = this.splitTextIntoChunks(text);
         const tempDir = path.join(path.dirname(outputPath), 'temp_chunks');
-        
+
         try {
             // Create temporary directory for chunks
             await fs.promises.mkdir(tempDir, { recursive: true });
@@ -416,7 +419,7 @@ class TTSService extends EventEmitter {
                 // Process batch of chunks concurrently
                 for (let i = batchStart; i < batchEnd; i++) {
                     const chunkPath = path.join(tempDir, `chunk_${i}.wav`);
-                    
+
                     this.emit('progress', {
                         current: i + 1,
                         total: totalChunks,
@@ -433,13 +436,13 @@ class TTSService extends EventEmitter {
                                 global.gc();
                             }
                         });
-                    
+
                     batchPromises.push(chunkPromise);
                 }
 
                 // Wait for current batch to complete before starting next batch
                 await Promise.all(batchPromises);
-                
+
                 // Small delay between batches to prevent system overload
                 if (batchEnd < chunks.length) {
                     await new Promise(resolve => setTimeout(resolve, 100));
@@ -488,13 +491,13 @@ class TTSService extends EventEmitter {
 
         while (currentIndex < text.length) {
             let endIndex = currentIndex + maxLength;
-            
+
             // If we're not at the end of the text, try to break at a sentence or word boundary
             if (endIndex < text.length) {
                 // Look for sentence endings within the last 500 characters of the chunk
                 const searchStart = Math.max(currentIndex + maxLength - 500, currentIndex);
                 const searchText = text.substring(searchStart, endIndex);
-                
+
                 // Try to find sentence boundary (. ! ?)
                 const sentenceMatch = searchText.match(/[.!?]\s+/g);
                 if (sentenceMatch) {
@@ -608,7 +611,7 @@ class TTSService extends EventEmitter {
         // Reset initialization state to allow retry
         this.isInitialized = false;
         this.availableVoices = [];
-        
+
         return await this.initialize();
     }
 
@@ -632,11 +635,11 @@ class TTSService extends EventEmitter {
         try {
             // Remove all event listeners
             this.removeAllListeners();
-            
+
             // Reset initialization state
             this.isInitialized = false;
             this.availableVoices = [];
-            
+
             // Reset voice loading state
             this.voiceLoadingState = {
                 isLoading: false,
@@ -645,10 +648,10 @@ class TTSService extends EventEmitter {
                 lastError: null,
                 retryDelay: 0
             };
-            
+
             // Clear audio processor reference
             this.audioProcessor = null;
-            
+
             console.log('TTSService cleanup completed');
         } catch (error) {
             console.error('Error during TTSService cleanup:', error);
